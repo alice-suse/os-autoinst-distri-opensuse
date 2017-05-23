@@ -29,28 +29,34 @@ our @EXPORT = qw(set_serialdev setup_console_in_grub repl_repo_in_sourcefile res
 my $grub_ver;
 
 sub set_serialdev() {
-    script_run("clear");
-    script_run("cat /etc/SuSE-release");
-    save_screenshot;
-    assert_screen([qw(on_host_sles_12_sp2_or_above on_host_lower_than_sles_12_sp2)]);
-
-    if (get_var("XEN") || check_var("HOST_HYPERVISOR", "xen")) {
-        if (match_has_tag("on_host_sles_12_sp2_or_above")) {
-            $serialdev = "hvc0";
+    if (!check_var('SERIALDEV', 'sshserial')) {
+        script_run("clear");
+        script_run("cat /etc/SuSE-release");
+        save_screenshot;
+        assert_screen([qw(on_host_sles_12_sp2_or_above on_host_lower_than_sles_12_sp2)]);
+    
+        if (get_var("XEN") || check_var("HOST_HYPERVISOR", "xen")) {
+            if (match_has_tag("on_host_sles_12_sp2_or_above")) {
+                $serialdev = "hvc0";
+            }
+            elsif (match_has_tag("on_host_lower_than_sles_12_sp2")) {
+                $serialdev = "xvc0";
+            }
         }
-        elsif (match_has_tag("on_host_lower_than_sles_12_sp2")) {
-            $serialdev = "xvc0";
+        else {
+            $serialdev = 'ttyS1';
+        }
+    
+        if (match_has_tag("grub1")) {
+            $grub_ver = "grub1";
+        }
+        else {
+            $grub_ver = "grub2";
         }
     }
     else {
-        $serialdev = get_var('SERIALDEV', 'ttyS1');
-    }
-
-    if (match_has_tag("grub1")) {
-        $grub_ver = "grub1";
-    }
-    else {
-        $grub_ver = "grub2";
+        $serialdev = "sshserial";
+        $grub_ver  = "unknown";
     }
 
     type_string("echo \"Debug info: serial dev is set to $serialdev. Grub version is $grub_ver.\"\n");
@@ -120,12 +126,39 @@ sub repl_repo_in_sourcefile() {
     }
 }
 
+#With the new ipmi backend, we only use the root-ssh serial console when the SUT boot up,
+#and no longer setup the real serial console for either kvm or xen.
+#When needs reboot, we will switch back to ipmi sol serial console.
+#We will mostly rely on ikvm to continue the test flow.
+#We also need to setup real serial console for it, because we need the serial output to debug issues in reboot.
+#We will use the SERIALDEV setting to tell what kind of serial console we want to use.
+
 sub resetup_console() {
     my $ipmi_console = set_serialdev();
     if (get_var("PROXY_MODE")) {
         &proxymode::set_serialdev();
     }
-    setup_console_in_grub($ipmi_console);
+    if ($ipmi_console ne "sshserial") {
+        setup_console_in_grub($ipmi_console);
+    }
+}
+#use it after SUT boot finish, as it requires ssh connection to SUT
+sub use_ssh_serial_console() {
+    console('sol')->disable;
+    select_console('root-ssh');
+    #$serialdev = 'sshserial';
+    set_var('SERIALDEV', 'sshserial');
+    bmwqemu::save_vars();
+    resetup_console;
+}
+
+#use it when SUT can not provide sshd, eg reboot, reinstall, which actually needs ipmi sol
+sub use_sol_serial_console() {
+    console('root-ssh')->disable;
+    select_console('sol');
+    set_var('SERIALDEV', '');
+    bmwqemu::save_vars();
+    resetup_console;
 }
 
 1;

@@ -22,7 +22,8 @@ sub reboot_and_wait_up() {
     my $reboot_timeout = shift;
 
     wait_idle 1;
-    select_console('root-console');
+    #select_console('root-console');
+    use_sol_serial_console;
     if (get_var("PROXY_MODE")) {
         my $test_machine = get_var("TEST_MACHINE");
         $self->reboot($test_machine, $reboot_timeout);

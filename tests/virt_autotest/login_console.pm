@@ -39,16 +39,17 @@ sub login_to_console() {
 
     assert_screen(['linux-login', 'virttest-displaymanager'], $timeout);
 
-    console('sol')->disable;
-    select_console('root-ssh');
-    $serialdev = 'sshserial';
-    set_var('SERIALDEV', 'sshserial');
+#    console('sol')->disable;
+#    select_console('root-ssh');
+#    $serialdev = 'sshserial';
+#    set_var('SERIALDEV', 'sshserial');
+	use_ssh_serial_console;
 }
 
 sub run() {
     my $self = shift;
     $self->login_to_console;
-    set_serialdev;
+    #set_serialdev;
 }
 
 1;

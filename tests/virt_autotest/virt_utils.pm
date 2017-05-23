@@ -24,7 +24,7 @@ use IO::File;
 use proxymode;
 use virt_autotest_base;
 
-our @EXPORT = qw(set_serialdev setup_console_in_grub repl_repo_in_sourcefile resetup_console);
+our @EXPORT = qw(set_serialdev setup_console_in_grub repl_repo_in_sourcefile resetup_console use_ssh_serial_console use_sol_serial_console);
 
 my $grub_ver;
 

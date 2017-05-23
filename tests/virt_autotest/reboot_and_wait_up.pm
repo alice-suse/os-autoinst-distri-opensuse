@@ -16,6 +16,7 @@ use warnings;
 use testapi;
 use login_console;
 use base "proxymode";
+use virt_utils;
 
 sub reboot_and_wait_up() {
     my $self           = shift;

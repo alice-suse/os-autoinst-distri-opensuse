@@ -152,6 +152,12 @@ sub run() {
         # we require ssh installation anyway
         if (check_var('BACKEND', 'ipmi')) {
             use_ssh_serial_console;
+            # set serial console for xen
+            print "SET SERIAL CONSOLE STARTS IN 5 MINUTES!!!!!!!!!!!!!!!!!!";
+            #sleep 300;
+            set_serial_console_on_xen("/dev/sda2", "/mnt") if (get_var("XEN") || check_var("HOST_HYPERVISOR", "xen"));
+            print "SET SERIAL CONSOLE FINISH IN 5 MINUTES!!!!!!!!!!!!!!!!!!";
+            sleep 300;
         }
         else {
             # avoid known issue in FIPS mode: bsc#985969

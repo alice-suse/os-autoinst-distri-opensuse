@@ -10,7 +10,7 @@
 package virt_utils;
 # Summary: virt_utils: The initial version of virtualization automation test in openqa.
 #          This file provides fundamental utilities.
-# Maintainer: alice <xlai@suse.com>
+# Maintainer: alice <xlai@suse.com> 
 
 use base Exporter;
 use Exporter;

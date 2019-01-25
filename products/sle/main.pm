@@ -804,18 +804,18 @@ elsif (get_var("VIRT_AUTOTEST")) {
         loadtest "virt_autotest/reboot_and_wait_up_normal";
     }
     else {
-        load_boot_tests();
-        if (get_var("AUTOYAST")) {
-            loadtest "autoyast/installation";
-            loadtest "virt_autotest/reboot_and_wait_up_normal";
-        }
-        else {
-            load_inst_tests();
+#        load_boot_tests();
+#        if (get_var("AUTOYAST")) {
+#            loadtest "autoyast/installation";
+#            loadtest "virt_autotest/reboot_and_wait_up_normal";
+#        }
+#        else {
+#            load_inst_tests();
             loadtest "virt_autotest/login_console";
-        }
-        loadtest "virt_autotest/install_package";
-        loadtest "virt_autotest/update_package";
-        loadtest "virt_autotest/reboot_and_wait_up_normal";
+#        }
+#        loadtest "virt_autotest/install_package";
+#        loadtest "virt_autotest/update_package";
+#        loadtest "virt_autotest/reboot_and_wait_up_normal";
     }
     if (get_var("VIRT_PRJ1_GUEST_INSTALL")) {
         loadtest "virt_autotest/guest_installation_run";
@@ -864,6 +864,9 @@ elsif (get_var("VIRT_AUTOTEST")) {
     }
     elsif (get_var("VIRT_NEW_GUEST_MIGRATION_DESTINATION")) {
         loadtest "virt_autotest/guest_migration_dst";
+    }
+    elsif (get_var("GUI_TEST_EXAMPLE")) {
+        loadtest "virt_autotest/virt_manager_example";
     }
 }
 elsif (get_var("PERF_KERNEL")) {

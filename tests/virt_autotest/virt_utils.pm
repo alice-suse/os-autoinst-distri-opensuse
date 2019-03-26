@@ -198,4 +198,55 @@ sub clean_up_red_disks {
     diag("Debug info: Disks and File Systems Overview:\n $disks_fs_overview");
 }
 
+sub upload_virt_logs {
+    my ($log_dir, $compressed_log_name) = @_;
+
+    my $full_compressed_log_name = "/tmp/$compressed_log_name.tar";
+    script_run("tar cvf $full_compressed_log_name $log_dir; gzip -f $full_compressed_log_name; rm $log_dir -r", 60);
+    save_screenshot;
+    upload_logs "$full_compressed_log_name.gz";
+    save_screenshot;
+
+}
+
+# Guest xml will be uploaded with name format [generated_name_by_this_func].xml
+# Guest disk will be uploaded with name format [generated_name_by_this_func].disk
+# When reusing these assets, needs to recover the names to original by reverting this process
+sub generate_guest_asset_name {
+    my $guest = shift;
+
+    my $composed_name = 'guest_' . $guest . '_on-host_' . get_required_var('DISTRI') . '-' . get_required_var('VERSION') 
+                        . '_build' . get_required_var('BUILD') . '_' . lc(get_required_var('SYSTEM_ROLE')) . '_' . get_required_var('ARCH');
+
+    record_info('Guest asset info', "Guest asset name is : $composed_name");
+
+    return $composed_name;
+}
+
+sub get_guest_disk_name_from_guest_xml {
+    my $guest = shift;
+
+    # Our automation only supports single guest disk
+    my $disk_from_xml = script_output("virsh dumpxml $guest | sed -n \'/disk/,/\\\/disk/p\' | grep 'source file=' | grep -v iso");
+    record_info('Guest disk config from xml', "Guest $guest disk_from_xml is: $disk_from_xml.");
+    $disk_from_xml =~ /file='(.*)'/;
+    $disk_from_xml = $1;
+    die 'There is no guest disk file parsed out from guest xml configuration!' unless $disk_from_xml;
+    record_info('Guest disk name', "Guest $guest disk_from_xml is: $disk_from_xml.");
+
+    return $disk_from_xml;
+}
+
+# Should only do compress from qcow2 disk to qcow2 in our automation(upload guest asset scheme).
+sub compress_single_qcow2_disk {
+    my ($orig_disk, $compressed_disk) = @_;
+
+    if ($orig_disk =~ /qcow2/) {
+        my $cmd = "nice ionice qemu-img convert -c -p -O qcow2 $orig_disk $compressed_disk";
+        assert_script_run($cmd, 360);
+        save_screenshot;
+        record_info('Disk compression', "Disk compression done from $orig_disk to $compressed_disk.");
+    }
+}
+
 1;

@@ -254,6 +254,8 @@ sub upload_guest_assets {
         my $guest_upload_asset_name = generate_guest_asset_name($guest);
         # Upload guest xml
         my $guest_xml_name = $guest_upload_asset_name . '.xml';
+        # TODO: on host sle11sp4, the guest name has random string at the end of GUEST_PATTERN
+        # eg sles-15-sp1-64-fv-def-net-77b-a43, so need to add special handle here for guest name
         assert_script_run("virsh dumpxml $guest > /tmp/$guest_xml_name");
         upload_asset("/tmp/$guest_xml_name", 1, 1);
         assert_script_run("rm /tmp/$guest_xml_name");

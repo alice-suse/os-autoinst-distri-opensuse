@@ -13,9 +13,10 @@
 
 use base "consoletest";
 use strict;
+use warnings;
 use testapi;
 use lockapi;
-use y2x11test 'setup_static_mm_network';
+use mm_network 'setup_static_mm_network';
 use utils qw(zypper_call systemctl);
 
 sub run {

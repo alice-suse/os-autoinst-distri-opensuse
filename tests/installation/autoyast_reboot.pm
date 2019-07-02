@@ -12,7 +12,8 @@
 # Maintainer: Ludwig Nussel <ludwig.nussel@suse.de>
 
 use strict;
-use base "y2logsstep";
+use warnings;
+use base 'y2_installbase';
 use testapi;
 
 sub run {

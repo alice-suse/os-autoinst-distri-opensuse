@@ -13,8 +13,9 @@
 
 use strict;
 use warnings;
-use parent qw(installation_user_settings y2logsstep);
+use parent qw(installation_user_settings y2_installbase);
 use testapi;
+use version_utils 'is_sle';
 
 sub run {
     my ($self) = @_;
@@ -27,15 +28,20 @@ sub run {
         return;
     }
 
-    send_key 'alt-f';    # Select full name text field
-    wait_screen_change { type_string $realname };
-    send_key 'tab';      # Select password field
-    send_key 'tab';
-    $self->type_password_and_verification;
+    $self->enter_userinfo();
     assert_screen 'inst-userinfostyped';
+    if (match_has_tag 'boo#1122804') {
+        diag "trying again with slow typing due to https://progress.opensuse.org/issues/46190\n";
+        $self->enter_userinfo(retry => 1);
+        assert_screen 'inst-userinfostyped';
+    }
     if (get_var('NOAUTOLOGIN') && !check_screen('autologindisabled', timeout => 0)) {
         send_key $cmd{noautologin};
         assert_screen 'autologindisabled';
+    }
+    elsif (is_sle() && check_var('NOAUTOLOGIN', '0')) {
+        send_key $cmd{noautologin};
+        assert_screen 'autologinenabled';
     }
     if (get_var('DOCRUN')) {
         send_key $cmd{otherrootpw};

@@ -14,6 +14,7 @@
 
 use base "installbasetest";
 use strict;
+use warnings;
 use testapi;
 use utils 'OPENQA_FTP_URL';
 
@@ -176,10 +177,6 @@ sub run {
     }
 
     assert_screen "zypper-dup-finish";
-}
-
-sub test_flags {
-    return {fatal => 1};
 }
 
 1;

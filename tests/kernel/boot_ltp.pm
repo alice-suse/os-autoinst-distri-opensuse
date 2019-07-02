@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2016-2018 SUSE LLC
+# Copyright © 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -16,6 +16,7 @@ use base 'opensusebasetest';
 use testapi;
 use bootloader_setup 'boot_grub_item';
 use Utils::Backends 'use_ssh_serial_console';
+use LTP::WhiteList 'download_whitelist';
 
 sub run {
     my ($self, $tinfo) = @_;
@@ -26,7 +27,7 @@ sub run {
 
     if ($is_ima) {
         # boot kernel with IMA parameters
-        $self->boot_grub_item();
+        boot_grub_item();
     }
     else {
         # during install_ltp, the second boot may take longer than usual
@@ -39,6 +40,8 @@ sub run {
     else {
         $self->select_serial_terminal;
     }
+
+    download_whitelist if get_var('LTP_KNOWN_ISSUES');
 
     assert_script_run('export LTPROOT=/opt/ltp; export LTP_COLORIZE_OUTPUT=n TMPDIR=/tmp PATH=$LTPROOT/testcases/bin:$PATH');
 
@@ -61,6 +64,10 @@ sub run {
     }
     script_run('env');
     upload_logs('/boot/config-$(uname -r)', failok => 1);
+
+    my $kernel_pkg_log = '/tmp/kernel-pkg.txt';
+    script_run("rpm -qi kernel-default > $kernel_pkg_log 2>&1");
+    upload_logs($kernel_pkg_log, failok => 1);
 
     my $ver_linux_log = '/tmp/ver_linux_before.txt';
     script_run("\$LTPROOT/ver_linux > $ver_linux_log 2>&1");
@@ -118,8 +125,7 @@ EOF
 
         # dhclient requires no wicked service not only running but also disabled
         script_run(
-            'systemctl --no-pager -p Id show network.service | grep -q Id=wicked.service &&
-{ export ENABLE_WICKED=1; systemctl disable wicked; }'
+            'systemctl --no-pager -p Id show network.service | grep -q Id=wicked.service && { export ENABLE_WICKED=1; systemctl disable wicked; }'
         );
 
         # emulate $LTPROOT/testscripts/network.sh

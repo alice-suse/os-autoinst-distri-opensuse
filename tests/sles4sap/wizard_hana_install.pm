@@ -1,6 +1,6 @@
 # SUSE's SLES4SAP openQA tests
 #
-# Copyright (C) 2018 SUSE LLC
+# Copyright (C) 2018-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -13,17 +13,11 @@
 
 use base 'sles4sap';
 use strict;
+use warnings;
 use testapi;
-use utils qw(type_string_slow zypper_call turn_off_gnome_screensaver);
+use utils;
 use Utils::Backends 'use_ssh_serial_console';
-use version_utils 'is_sle';
-
-sub get_total_mem {
-    return get_required_var('QEMURAM') if (check_var('BACKEND', 'qemu'));
-    my $mem = script_output q@grep ^MemTotal /proc/meminfo | awk '{print $2}'@;
-    $mem /= 1024;
-    return $mem;
-}
+use x11utils 'turn_off_gnome_screensaver';
 
 sub try_reclaiming_space {
     my $output = script_output q@parted /dev/sda print free | awk '/Free Space/ {print $3}' | tail -1@;
@@ -77,15 +71,13 @@ sub run {
     my ($proto, $path) = split m|://|, get_required_var('MEDIA');
     die "Currently supported protocols are nfs and smb" unless $proto =~ /^(nfs|smb)$/;
 
-    # Don't change this. The needle has this SID.
-    my $sid      = 'NDB';
+    my $sid      = get_required_var('INSTANCE_SID');
     my $password = 'Qwerty_123';
     set_var('PASSWORD', $password);
-    set_var('SAPADM',   lc($sid) . 'adm');
 
     check_var('BACKEND', 'ipmi') ? use_ssh_serial_console : select_console 'root-console';
-    my $RAM = get_total_mem();
-    die "RAM=$RAM. The SUT needs at least 32G of RAM" if $RAM < 32000;
+    my $RAM = $self->get_total_mem();
+    die "RAM=$RAM. The SUT needs at least 24G of RAM" if $RAM < 24000;
 
     # If on IPMI, let's try to reclaim some of the space from the system PV which may be needed for Hana
     try_reclaiming_space if (check_var('BACKEND', 'ipmi'));
@@ -93,13 +85,9 @@ sub run {
     # Add host's IP to /etc/hosts
     my $netdevice = get_var('SUT_NETDEVICE', 'eth0');
     assert_script_run "echo \$(ip -4 addr show dev $netdevice | sed -rne '/inet/s/[[:blank:]]*inet ([0-9\\.]*).*/\\1/p') \$(hostname) >> /etc/hosts";
-    if (is_sle('>=15')) {
-        my $arch       = get_required_var('ARCH');
-        my $os_version = script_output('sed -rn "s/^VERSION_ID=\"(.*)\"/\1/p" /etc/os-release');
-        assert_script_run "SUSEConnect -p sle-module-legacy/$os_version/$arch";
-        zypper_call('in libopenssl1_0_0');
-    }
     select_console 'x11';
+    # Hide the mouse so no needle will fail because of the mouse pointer appearing
+    mouse_hide;
 
     x11_start_program('xterm');
     turn_off_gnome_screensaver;
@@ -110,10 +98,11 @@ sub run {
     send_key_until_needlematch 'sap-wizard-proto-' . $proto . '-selected', 'down';
     send_key 'alt-p';
     type_string_slow "$path", wait_still_screen => 1;
+    save_screenshot;
     send_key 'tab';
     send_key $cmd{next};
-    assert_screen 'sap-wizard-copying-media';
-    assert_screen 'sap-wizard-supplement-medium', 3000;
+    assert_screen 'sap-wizard-copying-media',     120;
+    assert_screen 'sap-wizard-supplement-medium', 4000;
     send_key $cmd{next};
     assert_screen 'sap-wizard-additional-repos';
     send_key $cmd{next};
@@ -126,7 +115,7 @@ sub run {
     wait_screen_change { send_key 'tab' };
     type_password $password;
     wait_screen_change { send_key $cmd{ok} };
-    assert_screen 'sap-wizard-performing-installation', 60;
+    assert_screen 'sap-wizard-performing-installation', 120;
     assert_screen 'sap-wizard-profile-ready',           300;
     send_key $cmd{next};
     if (check_screen('sap-wizard-disk-selection', 60)) {
@@ -155,7 +144,7 @@ sub test_flags {
 sub post_fail_hook {
     my ($self) = @_;
     check_var('BACKEND', 'ipmi') ? use_ssh_serial_console : select_console 'root-console';
-    assert_script_run 'tar cf /tmp/logs.tar /var/adm/autoinstall/logs; xz -9v /tmp/logs.tar';
+    assert_script_run 'tar cf /tmp/logs.tar /var/adm/autoinstall/logs /var/tmp/hdb*; xz -9v /tmp/logs.tar';
     upload_logs '/tmp/logs.tar.xz';
     assert_script_run "save_y2logs /tmp/y2logs.tar.xz";
     upload_logs "/tmp/y2logs.tar.xz";

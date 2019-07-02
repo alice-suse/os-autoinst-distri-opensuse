@@ -11,8 +11,11 @@
 # Summary: Boot on UEFI systems with configuration of boot parameters
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
+package bootloader_uefi;
+
 use base "installbasetest";
 use strict;
+use warnings;
 
 use Time::HiRes 'sleep';
 
@@ -25,6 +28,8 @@ use version_utils qw(is_jeos is_caasp);
 
 # hint: press shift-f10 trice for highest debug level
 sub run {
+    my ($self) = @_;
+
     if (get_var("IPXE")) {
         sleep 60;
         return;
@@ -43,7 +48,10 @@ sub run {
     }
 
     # aarch64 firmware 'tianocore' can take longer to load
-    my $bootloader_timeout = check_var('ARCH', 'aarch64') ? 45 : 15;
+    my $bootloader_timeout = check_var('ARCH', 'aarch64') ? 60 : 15;
+    if (get_var('UEFI_HTTP_BOOT') || get_var('UEFI_HTTPS_BOOT')) {
+        tianocore_http_boot;
+    }
     assert_screen([qw(bootloader-shim-import-prompt bootloader-grub2)], $bootloader_timeout);
     if (match_has_tag("bootloader-shim-import-prompt")) {
         send_key "down";
@@ -54,24 +62,28 @@ sub run {
         sleep 5;
     }
     if (get_var("ZDUP")) {
-        # uefi bootloader has no "boot from harddisk" option. So we
-        # have to just reboot here
-        eject_cd;
-        power('reset');
+        # 'eject_cd' is broken ATM (at least on aarch64), so select HDD from menu - poo#47303
+        # Check we are booting the ISO
+        assert_screen 'inst-bootmenu';
+        # Select boot from HDD
+        send_key_until_needlematch 'inst-bootmenu-boot-harddisk', 'up';
+        send_key 'ret';
+        # use firmware boot manager of aarch64 to boot HDD
+        $self->handle_uefi_boot_disk_workaround if (check_var('ARCH', 'aarch64'));
         assert_screen("grub2");
         return;
     }
 
     if (get_var("UPGRADE")) {
         # random magic numbers
-        send_key_until_needlematch('inst-onupgrade', 'down', 10, 5);
+        send_key_until_needlematch('inst-onupgrade', 'down', 10, 3);
     }
     else {
         if (get_var("PROMO") || get_var('LIVETEST') || get_var('LIVECD')) {
-            send_key_until_needlematch("boot-live-" . get_var("DESKTOP"), 'down', 10, 5);
+            send_key_until_needlematch("boot-live-" . get_var("DESKTOP"), 'down', 10, 3);
         }
         elsif (!is_jeos && !is_caasp('VMX')) {
-            send_key_until_needlematch('inst-oninstallation', 'down', 10, 5);
+            send_key_until_needlematch('inst-oninstallation', 'down', 10, 3);
         }
     }
 

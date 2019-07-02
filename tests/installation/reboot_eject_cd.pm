@@ -11,8 +11,9 @@
 # Summary: splited wait_encrypt_prompt being a single step; harmonized once wait_encrypt_prompt obsoleted
 # Maintainer: Max Lin <mlin@suse.com>
 
+use base 'y2_installbase';
 use strict;
-use base "y2logsstep";
+use warnings;
 use testapi;
 use utils;
 

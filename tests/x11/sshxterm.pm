@@ -13,6 +13,7 @@
 
 use base "x11test";
 use strict;
+use warnings;
 use testapi;
 use utils;
 
@@ -21,7 +22,8 @@ sub run {
     mouse_hide(1);
     x11_start_program('xterm');
     prepare_ssh_localhost_key_login $username;
-    type_string("ssh -XC root\@localhost xterm\n");
+    # add SSH_AUTH_SOCK=0 to fix 'sign_and_send_pubkey: signing failed: agent refused operation'
+    type_string("SSH_AUTH_SOCK=0 ssh -XC root\@localhost xterm\n");
     assert_screen([qw(ssh-xterm-host-key-authentication ssh-second-xterm)]);
     # if ssh asks for authentication of the key accept it
     if (match_has_tag('ssh-xterm-host-key-authentication')) {

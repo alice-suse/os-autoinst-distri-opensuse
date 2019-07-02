@@ -11,8 +11,9 @@
 # Summary: s390x disk activation test
 # Maintainer: Matthias Griessmeier <mgriessmeier@suse.com>
 
-use base "y2logsstep";
+use base 'y2_installbase';
 use strict;
+use warnings;
 use testapi;
 use version_utils 'is_sle';
 

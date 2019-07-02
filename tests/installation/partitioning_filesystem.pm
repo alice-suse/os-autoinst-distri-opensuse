@@ -11,8 +11,9 @@
 # Summary: Partition setup via partition proposal menu
 # Maintainer: Richard Brown <rbrownccb@opensuse.org>
 
+use base 'y2_installbase';
 use strict;
-use base "y2logsstep";
+use warnings;
 use testapi;
 use version_utils qw(is_storage_ng is_sle);
 use partition_setup 'select_first_hard_disk';

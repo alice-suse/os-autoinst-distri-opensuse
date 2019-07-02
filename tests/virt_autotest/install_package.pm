@@ -14,8 +14,10 @@ use strict;
 use warnings;
 use base "virt_autotest_base";
 use testapi;
+use virt_utils;
 
 sub install_package {
+
     my $qa_server_repo = get_var('QA_HEAD_REPO', '');
     if ($qa_server_repo eq '') {
         #default repo according to version if not set from testsuite
@@ -23,8 +25,14 @@ sub install_package {
         set_var('QA_HEAD_REPO', $qa_server_repo);
         bmwqemu::save_vars();
     }
-    script_run "zypper --non-interactive rr server-repo";
-    assert_script_run("zypper --non-interactive --no-gpg-check -n ar -f '$qa_server_repo' server-repo");
+    if (check_var('ARCH', 's390x')) {
+        lpar_cmd("zypper --non-interactive rr server-repo");
+        lpar_cmd("zypper --non-interactive --no-gpg-check ar -f '$qa_server_repo' server-repo");
+    }
+    else {
+        script_run "zypper --non-interactive rr server-repo";
+        assert_script_run("zypper --non-interactive --no-gpg-check ar -f '$qa_server_repo' server-repo");
+    }
 
     #workaround for dependency on xmlstarlet for qa_lib_virtauto on sles11sp4 and sles12sp1
     #workaround for dependency on bridge-utils for qa_lib_virtauto on sles15sp0
@@ -43,19 +51,41 @@ sub install_package {
         $dependency_repo = 'http://download.suse.de/ibs/SUSE:/SLE-15:/GA/standard/';
         $dependency_rpms = 'bridge-utils';
     }
+
     if ($dependency_repo) {
-        assert_script_run("zypper --non-interactive --no-gpg-check -n ar -f ${dependency_repo} dependency_repo");
-        assert_script_run("zypper --non-interactive --gpg-auto-import-keys ref", 180);
-        assert_script_run("zypper --non-interactive -n in $dependency_rpms");
-        assert_script_run("zypper --non-interactive -n rr dependency_repo");
+        if (check_var('ARCH', 's390x')) {
+            lpar_cmd("zypper --non-interactive --no-gpg-check ar -f ${dependency_repo} dependency_repo");
+            lpar_cmd("zypper --non-interactive --gpg-auto-import-keys ref");
+            lpar_cmd("zypper --non-interactive in $dependency_rpms");
+            lpar_cmd("zypper --non-interactive rr dependency_repo");
+        }
+        else {
+            assert_script_run("zypper --non-interactive --no-gpg-check ar -f ${dependency_repo} dependency_repo");
+            assert_script_run("zypper --non-interactive --gpg-auto-import-keys ref", 180);
+            assert_script_run("zypper --non-interactive in $dependency_rpms");
+            assert_script_run("zypper --non-interactive rr dependency_repo");
+        }
     }
+
+    ###SLE-12-SP4 arm64 installation has no KVM role selection
+    if (($repo_0_to_install =~ /SLE-12-SP4/m) && check_var('ARCH', 'aarch64')) {
+        assert_script_run("zypper --non-interactive --gpg-auto-import-keys ref",         180);
+        assert_script_run("zypper --non-interactive in -t pattern kvm_server kvm_tools", 300);
+    }
+
     #install qa_lib_virtauto
-    assert_script_run("zypper --non-interactive --gpg-auto-import-keys ref", 180);
-    assert_script_run("zypper --non-interactive -n in qa_lib_virtauto",      1800);
+    if (check_var('ARCH', 's390x')) {
+        lpar_cmd("zypper --non-interactive --gpg-auto-import-keys ref");
+        lpar_cmd("zypper --non-interactive in qa_lib_virtauto");
+    }
+    else {
+        assert_script_run("zypper --non-interactive --gpg-auto-import-keys ref", 180);
+        assert_script_run("zypper --non-interactive in qa_lib_virtauto",         1800);
+    }
 
     if (get_var("PROXY_MODE")) {
         if (get_var("XEN")) {
-            assert_script_run("zypper --non-interactive -n in -t pattern xen_server", 1800);
+            assert_script_run("zypper --non-interactive in -t pattern xen_server", 1800);
         }
     }
 }

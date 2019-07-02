@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2016-2017 SUSE LLC
+# Copyright © 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -18,10 +18,13 @@
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
 use base "installbasetest";
+use warnings;
 use testapi;
 use utils;
 use version_utils "is_upgrade";
 use strict;
+use warnings;
+use x11utils 'turn_off_kde_screensaver';
 
 sub send_key_and_wait {
     my ($key, $wait_time) = @_;
@@ -46,14 +49,23 @@ sub run {
     assert_screen ["inst-welcome", "inst-betawarning"], 180;
     # To fully reuse installer screenshots we set to fullscreen. Unfortunately
     # it seems no default shortcut is configured in plasma but we can use the
-    # window context menu. Right click at the top to not set the beta warning
-    # to fullscreen.
-    mouse_set 100, 0;
-    mouse_click 'right';
-    mouse_hide;
+    # window context menu.
+
+    if (match_has_tag 'inst-betawarning') {
+        # Right click at the top to not set the beta warning to fullscreen.
+        # This seems to hit a bug in KWin in 15.0 though,
+        # so only use if necessary.
+        mouse_set 100, 0;
+        mouse_click 'right';
+        mouse_hide;
+    }
+    else {
+        send_key 'alt-f3';
+    }
     assert_screen 'context-menu-more_actions';
     # more
     send_key_and_wait 'alt-m';
+    assert_screen 'more_actions-fullscreen_opt';
     # fullscreen
     send_key_and_wait 'alt-f';
     assert_screen 'fullscreen-mode-information_dialog', 180;

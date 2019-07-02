@@ -13,12 +13,13 @@
 
 use base "x11test";
 use strict;
+use warnings;
 use testapi;
 
 sub run {
     x11_start_program('oocalc');
     wait_still_screen;    # extra wait because oo sometimes appears to be idle during start
-    wait_screen_change { assert_and_click 'input-area-oocalc', 'left', 10 };
+    wait_screen_change { assert_and_click('input-area-oocalc', timeout => 10) };
     type_string "Hello World!\n";
     assert_screen 'test-oocalc-2';
     send_key "alt-f4";

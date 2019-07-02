@@ -9,6 +9,12 @@ For more details see http://os-autoinst.github.io/openQA/
 
 Please, find test variables description [here](https://github.com/os-autoinst/os-autoinst-distri-opensuse/blob/master/variables.md)
 
+For using new mechanism to schedule modules, check [declarative schedule docs](declarative-schedule-doc.md)
+
+In case of adding new test for Installation, please use approach
+described in the
+[documentation for UI Test Automation Framework](ui-framework-documentation.md)
+
 ## How to contribute
 Please, refer to [Contributing Guide](https://github.com/os-autoinst/os-autoinst-distri-opensuse/blob/master/CONTRIBUTING.md).
 

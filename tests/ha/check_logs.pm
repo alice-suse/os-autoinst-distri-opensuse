@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright (c) 2016-2018 SUSE LLC
+# Copyright (c) 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -12,9 +12,10 @@
 
 use base 'opensusebasetest';
 use strict;
+use warnings;
 use testapi;
 use lockapi;
-use hacluster;
+use hacluster qw(get_cluster_name ha_export_logs);
 
 sub run {
     my $cluster_name = get_cluster_name;
@@ -28,7 +29,7 @@ sub run {
     ha_export_logs;
 
     # Looking for segfault during the test
-    assert_script_run '(( $(grep -sR segfault /var/log | wc -l) == 0 ))';
+    record_soft_failure "bsc#1132123" if (script_run '(( $(grep -sR segfault /var/log | wc -l) == 0 ))');
 }
 
 # Specific test_flags for this test module

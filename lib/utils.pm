@@ -1,4 +1,4 @@
-# Copyright (C) 2015-2018 SUSE LLC
+# Copyright (C) 2015-2019 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,10 +19,12 @@ use base Exporter;
 use Exporter;
 
 use strict;
+use warnings;
 use testapi qw(is_serial_terminal :DEFAULT);
 use lockapi 'mutex_wait';
 use mm_network;
 use version_utils qw(is_caasp is_leap is_sle is_sle12_hdd_in_upgrade is_storage_ng is_jeos);
+use Utils::Systemd 'systemctl';
 use Mojo::UserAgent;
 
 our @EXPORT = qw(
@@ -30,6 +32,7 @@ our @EXPORT = qw(
   clear_console
   type_string_slow
   type_string_very_slow
+  type_string_slow_extended
   save_svirt_pty
   type_line_svirt
   integration_services_check
@@ -37,14 +40,15 @@ our @EXPORT = qw(
   unlock_if_encrypted
   get_netboot_mirror
   zypper_call
+  zypper_enable_install_dvd
+  zypper_ar
   fully_patch_system
+  ssh_fully_patch_system
   minimal_patch_system
   workaround_type_encrypted_passphrase
-  select_user_gnome
-  ensure_unlocked_desktop
+  is_boot_encrypted
   is_bridged_networking
   set_bridged_networking
-  ensure_fullscreen
   assert_screen_with_soft_timeout
   pkcon_quit
   systemctl
@@ -52,12 +56,8 @@ our @EXPORT = qw(
   addon_license
   addon_products_is_applicable
   noupdatestep_is_applicable
-  turn_off_kde_screensaver
-  turn_off_gnome_screensaver
+  installwithaddonrepos_is_applicable
   random_string
-  handle_login
-  handle_logout
-  handle_relogin
   handle_emergency
   handle_grub_zvm
   handle_untrusted_gpg_key
@@ -68,20 +68,27 @@ our @EXPORT = qw(
   get_x11_console_tty
   OPENQA_FTP_URL
   arrays_differ
+  arrays_subset
   ensure_serialdev_permissions
   assert_and_click_until_screen_change
   exec_and_insert_password
   shorten_url
   reconnect_mgmt_console
   set_hostname
-  zypper_ar
   show_tasks_in_blocked_state
   svirt_host_basedir
   prepare_ssh_localhost_key_login
   disable_serial_getty
+  script_retry
   script_run_interactive
+  create_btrfs_subvolume
+  file_content_replace
 );
 
+=head1 SYNOPSIS
+
+Main file for all kind of functions
+=cut
 
 # USB kbd in raw mode is rather slow and QEMU only buffers 16 bytes, so
 # we need to type very slowly to not lose keypresses.
@@ -100,11 +107,12 @@ our $OPENQA_FTP_URL = "ftp://openqa.suse.de";
 my $svirt_pty_saved = 0;
 
 =head2 save_svirt_pty
+
 save the pty device within the svirt shell session so that we can refer to the
 correct pty pointing to the first tty, e.g. for password entry for encrypted
 partitions and rewriting the network definition of zKVM instances.
 
-Does not work on Hyper-V.
+Does B<not> work on B<Hyper-V>.
 =cut
 sub save_svirt_pty {
     return if check_var('VIRSH_VMM_FAMILY', 'hyperv');
@@ -113,6 +121,10 @@ sub save_svirt_pty {
     type_string "echo \$pty\n";
 }
 
+=head2 type_line_svirt
+
+TODO someone should document this
+=cut
 sub type_line_svirt {
     my ($string, %args) = @_;
     type_string "echo $string > \$pty\n";
@@ -121,6 +133,10 @@ sub type_line_svirt {
     }
 }
 
+=head2 unlock_zvm_disk
+
+TODO someone should document this
+=cut
 sub unlock_zvm_disk {
     my ($console) = @_;
     eval { console('x3270')->expect_3270(output_delim => 'Please enter passphrase', timeout => 30) };
@@ -134,6 +150,10 @@ sub unlock_zvm_disk {
 
 }
 
+=head2 handle_grub_zvm
+
+TODO someone should document this
+=cut
 sub handle_grub_zvm {
     my ($console) = @_;
     eval { $console->expect_3270(output_delim => 'GNU GRUB', timeout => 60); };
@@ -145,6 +165,10 @@ sub handle_grub_zvm {
     }
 }
 
+=head2 handle_untrusted_gpg_key
+
+TODO someone should document this
+=cut
 sub handle_untrusted_gpg_key {
     if (match_has_tag('import-known-untrusted-gpg-key')) {
         record_info('Import', 'Known untrusted gpg key is imported');
@@ -157,9 +181,13 @@ sub handle_untrusted_gpg_key {
 }
 
 =head2 integration_services_check_ip
+
 Check that guest IP address that host and guest see is the same.
 =cut
 sub integration_services_check_ip {
+    # Workaround for poo#44771 "Can't call method "exec" on an undefined value"
+    select_console('svirt');
+    select_console('sut');
     # Host-side of Integration Services
     my $vmname = console('svirt')->name;
     my $ips_host_pov;
@@ -184,6 +212,7 @@ sub integration_services_check_ip {
 }
 
 =head2 integration_services_check
+
 Make sure integration services (e.g. kernel modules, utilities, services)
 are present and in working condition.
 =cut
@@ -216,6 +245,10 @@ sub integration_services_check {
     }
 }
 
+=head2 unlock_if_encrypted
+
+Check whether the system under test has an encrypted partition and attempts to unlock it
+=cut
 sub unlock_if_encrypted {
     my (%args) = @_;
     $args{check_typed_password} //= 0;
@@ -253,63 +286,26 @@ sub unlock_if_encrypted {
     }
 }
 
-=head2 systemctl
-Wrapper around systemctl call to be able to add some useful options.
-
-Please note that return code of this function is handle by 'script_run' or
-'assert_script_run' function, and as such, can be different.
-=cut
-sub systemctl {
-    my ($command, %args) = @_;
-    my $expect_false = $args{expect_false} ? '!' : '';
-    my @script_params = ("$expect_false systemctl --no-pager $command", timeout => $args{timeout}, fail_message => $args{fail_message});
-    if ($args{ignore_failure}) {
-        script_run($script_params[0], $args{timeout});
-    } else {
-        assert_script_run(@script_params);
-    }
-}
-
-sub turn_off_kde_screensaver {
-    x11_start_program('kcmshell5 screenlocker', target_match => [qw(kde-screenlock-enabled screenlock-disabled)]);
-    if (match_has_tag('kde-screenlock-enabled')) {
-        assert_and_click('kde-disable-screenlock');
-    }
-    assert_screen 'screenlock-disabled';
-    send_key('alt-o');
-    assert_screen 'generic-desktop';
-}
-
-=head2 turn_off_gnome_screensaver
-
-  turn_off_gnome_screensaver()
-
-Disable screensaver in gnome. To be called from a command prompt, for example an xterm window.
-
-=cut
-sub turn_off_gnome_screensaver {
-    script_run 'gsettings set org.gnome.desktop.session idle-delay 0';
-}
-
-
 # 'ctrl-l' does not get queued up in buffer. If this happens to fast, the
 # screen would not be cleared
 sub clear_console {
     type_string "clear\n";
 }
 
-# assert_gui_app (optionally installs and) starts an application, checks it started
-# and closes it again. It's the most minimalistic way to test a GUI application
-# Mandatory parameter: application: the name of the application.
-# Optional parameters are:
-#   install: boolean    => does the application have to be installed first? Especially
-#                         on live images where we want to ensure the disks are complete
-#                         the parameter should not be set to true - otherwise we might
-#                         mask the fact that the app is not on the media
-#   exec_param: string => When calling the application, pass this parameter on the command line
-#   remain: boolean    => If set to true, do not close the application when tested it is
-#                         running. This can be used if the application shall be tested further
+=head2 assert_gui_app
 
+assert_gui_app (optionally installs and) starts an application, checks it started
+and closes it again. It's the most minimalistic way to test a GUI application
+Mandatory parameter: application: the name of the application.
+Optional parameters are:
+   install: boolean    => does the application have to be installed first? Especially
+                         on live images where we want to ensure the disks are complete
+                         the parameter should not be set to true - otherwise we might
+                         mask the fact that the app is not on the media
+   exec_param: string => When calling the application, pass this parameter on the command line
+   remain: boolean    => If set to true, do not close the application when tested it is
+                         running. This can be used if the application shall be tested further
+=cut
 sub assert_gui_app {
     my ($application, %args) = @_;
     ensure_installed($application) if $args{install};
@@ -318,12 +314,15 @@ sub assert_gui_app {
     send_key "alt-f4" unless $args{remain};
 }
 
-# 13.2, Leap 42.1, SLE12 GA&SP1 have problems with setting up the
-# console font, we need to call systemd-vconsole-setup to workaround
-# that
+=head2 check_console font
+
+13.2, Leap 42.1, SLE12 GA&SP1 have problems with setting up the
+console font, we need to call systemd-vconsole-setup to workaround
+that
+=cut
 sub check_console_font {
     # Does not make sense on ssh-based consoles
-    return if (check_var('BACKEND', 'spvm')) || (check_var('BACKEND', 'ipmi'));
+    return if get_var('BACKEND', '') =~ /ipmi|spvm/;
     # we do not await the console here, as we have to expect the font to be broken
     # for the needle to match
     select_console('root-console', await_console => 0);
@@ -339,12 +338,29 @@ sub check_console_font {
     }
 }
 
+=head2 type_string_slow_extended
+
+Enable additional arguments for nested calls of wait_still_screen
+=cut
+sub type_string_slow_extended {
+    my ($string) = @_;
+    type_string($string, max_interval => SLOW_TYPING_SPEED, wait_still_screen => 0.05, timeout => 5, similarity_level => 38);
+}
+
+=head2 type_string_slow
+
+Typing a string with SLOW_TYPING_SPEED to avoid losing keys
+=cut
 sub type_string_slow {
     my ($string) = @_;
 
     type_string $string, SLOW_TYPING_SPEED;
 }
 
+=head2 type_string_very_slow
+
+Typing a string even slower with VERY_SLOW_TYPING_SPEED
+=cut
 sub type_string_very_slow {
     my ($string) = @_;
 
@@ -368,20 +384,27 @@ sub type_string_very_slow {
     }
 }
 
+
+=head2 get_netboot_mirror
+
+TODO someone should document this
+=cut
 sub get_netboot_mirror {
     my $m_protocol = get_var('INSTALL_SOURCE', 'http');
     return get_var('MIRROR_' . uc($m_protocol));
 }
 
-# function wrapping 'zypper -n' with allowed return code, timeout and logging facility
-# first parammeter is required command , all others are named and provided as hash
-# for example : zypper_call("up", exitcode => [0,102,103], log => "zypper.log");
-# up -- zypper -n up -- update system
-# exitcode -- allowed return code values
-# log -- capture log and store it in zypper.log
-# dumb_term -- pipes through cat if set to 1 and log is not set. This is a  workaround
-# to get output without any ANSI characters in zypper before 1.14.1. See boo#1055315.
+=head2 zypper_call
 
+function wrapping 'zypper -n' with allowed return code, timeout and logging facility
+first parammeter is required command , all others are named and provided as hash
+for example : zypper_call("up", exitcode => [0,102,103], log => "zypper.log");
+up -- zypper -n up -- update system
+exitcode -- allowed return code values
+log -- capture log and store it in zypper.log
+dumb_term -- pipes through cat if set to 1 and log is not set. This is a  workaround
+to get output without any ANSI characters in zypper before 1.14.1. See boo#1055315.
+=cut
 sub zypper_call {
     my $command          = shift;
     my %args             = @_;
@@ -415,22 +438,66 @@ sub zypper_call {
     return $ret;
 }
 
+
+=head2 zypper_enable_install_dvd
+
+TODO someone should document this
+=cut
+sub zypper_enable_install_dvd {
+    # If DVD Packages is used we need to (re-)enable the local repos
+    # see FATE#325541
+    zypper_call 'mr -e -l' if is_sle('15+') and get_var('ISO_1', '') =~ /SLE-.*-Packages-.*\.iso/;
+    zypper_call 'ref';
+}
+
+=head2 zypper_ar
+
+Works exactly like zypper_ar on console
+=cut
+sub zypper_ar {
+    my ($url, $name) = @_;
+
+    zypper_call("ar $url $name",                           dumb_term => 1);
+    zypper_call("--gpg-auto-import-keys ref --repo $name", dumb_term => 1);
+}
+
+=head2 fully_patch_system
+
+TODO someone should document this
+=cut
 sub fully_patch_system {
     # first run, possible update of packager -- exit code 103
-    zypper_call('patch --with-interactive -l', exitcode => [0, 102, 103], timeout => 1500);
+    zypper_call('patch --with-interactive -l', exitcode => [0, 102, 103], timeout => 3000);
     # second run, full system update
     zypper_call('patch --with-interactive -l', exitcode => [0, 102], timeout => 6000);
 }
 
-# zypper doesn't offer --updatestack-only option before 12-SP1, use patch for sp0 to update packager
+=head2 ssh_fully_patch_system
+
+TODO someone should document this
+=cut
+sub ssh_fully_patch_system {
+    my $host = shift;
+    # first run, possible update of packager -- exit code 103
+    my $ret = script_run("ssh root\@$host 'zypper -n patch --with-interactive -l'", 1500);
+    die "Zypper failed with $ret" if ($ret != 0 && $ret != 102 && $ret != 103);
+    # second run, full system update
+    $ret = script_run("ssh root\@$host 'zypper -n patch --with-interactive -l'", 6000);
+    die "Zypper failed with $ret" if ($ret != 0 && $ret != 102);
+}
+
+=head2 minimal_patch_system
+
+zypper doesn't offer --updatestack-only option before 12-SP1, use patch for sp0 to update packager
+=cut
 sub minimal_patch_system {
     my (%args) = @_;
     $args{version_variable} //= 'VERSION';
     if (is_sle('12-SP1+', get_var($args{version_variable}))) {
-        zypper_call('patch --with-interactive -l --updatestack-only', exitcode => [0, 102, 103], timeout => 1500, log => 'minimal_patch.log');
+        zypper_call('patch --with-interactive -l --updatestack-only', exitcode => [0, 102, 103], timeout => 3000, log => 'minimal_patch.log');
     }
     else {
-        zypper_call('patch --with-interactive -l', exitcode => [0, 102, 103], timeout => 1500, log => 'minimal_patch.log');
+        zypper_call('patch --with-interactive -l', exitcode => [0, 102, 103], timeout => 3000, log => 'minimal_patch.log');
     }
 }
 
@@ -445,100 +512,46 @@ boot partition within the encrypted LVM same as in test scenarios where we
 explicitly create an LVM including boot (C<FULL_LVM_ENCRYPT>). C<ppc64le> was
 already doing the same by default also in the case of pre-storage-ng but not
 anymore for storage-ng.
-
 =cut
 sub workaround_type_encrypted_passphrase {
     # nothing to do if the boot partition is not encrypted in FULL_LVM_ENCRYPT
-    return if get_var('UNENCRYPTED_BOOT');
-    return if !get_var('ENCRYPT') && !get_var('FULL_LVM_ENCRYPT');
-    # ppc64le on pre-storage-ng boot was part of encrypted LVM
-    return if !get_var('FULL_LVM_ENCRYPT') && !is_storage_ng && !get_var('OFW');
-    # If the encrypted disk is "just activated" it does not mean that the
-    # installer would propose an encrypted installation again
-    return if get_var('ENCRYPT_ACTIVATE_EXISTING') && !get_var('ENCRYPT_FORCE_RECOMPUTE');
+    return unless is_boot_encrypted();
     record_soft_failure 'workaround https://fate.suse.com/320901' if is_sle('12-SP4+');
     unlock_if_encrypted;
 }
 
-# Handle the case when user is not selected, on gnome
-sub select_user_gnome {
-    my ($myuser) = @_;
-    $myuser //= $username;
-    assert_screen [qw(displaymanager-user-selected displaymanager-user-notselected dm-nousers)];
-    if (match_has_tag('displaymanager-user-notselected')) {
-        assert_and_click "displaymanager-$myuser";
-        record_soft_failure 'bsc#1086425- user account not selected by default, have to use mouse to login';
-    }
-    elsif (match_has_tag('displaymanager-user-selected')) {
-        send_key 'ret';
-    }
-    elsif (match_has_tag('dm-nousers')) {
-        type_string $myuser;
-        send_key 'ret';
-    }
+=head2 is_boot_encrypted
+
+TODO someone should document this
+=cut
+sub is_boot_encrypted {
+    return 0 if get_var('UNENCRYPTED_BOOT');
+    return 0 if !get_var('ENCRYPT') && !get_var('FULL_LVM_ENCRYPT');
+    # for Leap 42.3 and SLE 12 codestream the boot partition is not encrypted
+    # Only aarch64 needs separate handling
+    # ppc64le on pre-storage-ng boot was part of encrypted LVM
+    return 0 if !get_var('FULL_LVM_ENCRYPT') && !is_storage_ng && !get_var('OFW');
+    # SLES 15: we don't have scenarios for cryptlvm which boot partion is unencrypted.
+    return 0 if is_sle('15+') && !get_var('ENCRYPT');
+    # If the encrypted disk is "just activated" it does not mean that the
+    # installer would propose an encrypted installation again
+    return 0 if get_var('ENCRYPT_ACTIVATE_EXISTING') && !get_var('ENCRYPT_FORCE_RECOMPUTE');
+
+    return 1;
 }
 
-# if stay under tty console for long time, then check
-# screen lock is necessary when switch back to x11
-# all possible options should be handled within loop to get unlocked desktop
-sub ensure_unlocked_desktop {
-    my $counter = 10;
-    while ($counter--) {
-        assert_screen [qw(displaymanager displaymanager-password-prompt generic-desktop screenlock screenlock-password)], no_wait => 1;
-        if (match_has_tag 'displaymanager') {
-            if (check_var('DESKTOP', 'minimalx')) {
-                type_string "$username";
-                save_screenshot;
-            }
-            if (!check_var('DESKTOP', 'gnome') || (is_sle('<15') || is_leap('<15.0'))) {
-                send_key 'ret';
-            }
-            # On gnome, user may not be selected and using 'ret' is not enough in this case
-            else {
-                select_user_gnome($username);
-            }
-        }
-        if ((match_has_tag 'displaymanager-password-prompt') || (match_has_tag 'screenlock-password')) {
-            if ($password ne '') {
-                type_password;
-                assert_screen [qw(locked_screen-typed_password login_screen-typed_password)];
-            }
-            send_key 'ret';
-        }
-        if (match_has_tag 'generic-desktop') {
-            send_key 'esc';
-            unless (get_var('DESKTOP', '') =~ m/awesome|enlightenment|lxqt/) {
-                # gnome/mate/minimalx might show the old 'generic desktop' screen although that is
-                # just a left over in the framebuffer but actually the screen is
-                # already locked so we have to try something else to check
-                # responsiveness.
-                # open run command prompt (if screen isn't locked)
-                mouse_hide(1);
-                send_key 'alt-f2';
-                if (check_screen 'desktop-runner', 30) {
-                    send_key 'esc';
-                    assert_screen 'generic-desktop';
-                }
-                else {
-                    next;    # most probably screen is locked
-                }
-            }
-            last;            # desktop is unlocked, mission accomplished
-        }
-        if (match_has_tag 'screenlock') {
-            wait_screen_change {
-                send_key 'esc';    # end screenlock
-            };
-        }
-        wait_still_screen 2;       # slow down loop
-        die 'ensure_unlocked_desktop repeated too much. Check for X-server crash.' if ($counter eq 1);    # die loop when generic-desktop not matched
-    }
-}
+=head2 is_bridged_networking
 
+returns BRIDGED_NETWORKING
+=cut
 sub is_bridged_networking {
     return get_var('BRIDGED_NETWORKING');
 }
 
+=head2 set_bridged_networking
+
+sets BRIDGED_NETWORKING if applicable
+=cut
 sub set_bridged_networking {
     my $ret = 0;
     if (check_var('BACKEND', 'svirt') and !check_var('ARCH', 's390x')) {
@@ -551,7 +564,7 @@ sub set_bridged_networking {
 
 =head2 set_hostname
 
-    set_hostname($hostname);
+set_hostname($hostname);
 
 Setting hostname according input parameter using hostnamectl.
 Calling I<reload-or-restart> to make sure that network stack will propogate
@@ -574,17 +587,10 @@ sub set_hostname {
     assert_script_run "if systemctl -q is-active network.service; then systemctl reload-or-restart network.service; fi";
 }
 
-sub ensure_fullscreen {
-    my (%args) = @_;
-    $args{tag} //= 'yast2-windowborder';
-    # for ssh-X using our window manager we need to handle windows explicitly
-    if (check_var('VIDEOMODE', 'ssh-x')) {
-        assert_screen($args{tag});
-        my $console = select_console("installation");
-        $console->fullscreen({window_name => 'YaST2*'});
-    }
-}
+=head2 assert_and_click_until_screen_change
 
+TODO someone should document this
+=cut
 sub assert_and_click_until_screen_change {
     my ($mustmatch, $wait_change, $repeat) = @_;
     $wait_change //= 2;
@@ -635,9 +641,10 @@ Example:
 sub assert_screen_with_soft_timeout {
     my ($mustmatch, %args) = @_;
     # as in assert_screen
-    $args{timeout}             //= 30;
-    $args{soft_timeout}        //= 0;
-    $args{soft_failure_reason} //= "$args{bugref}: needle(s) $mustmatch not found within $args{soft_timeout}";
+    $args{timeout}      //= 30;
+    $args{soft_timeout} //= 0;
+    my $needle_info = ref($mustmatch) eq "ARRAY" ? join(',', @$mustmatch) : $mustmatch;
+    $args{soft_failure_reason} //= "$args{bugref}: needle(s) $needle_info not found within $args{soft_timeout}";
     if ($args{soft_timeout}) {
         die "soft timeout has to be smaller than timeout" unless ($args{soft_timeout} < $args{timeout});
         my $ret = check_screen $mustmatch, $args{soft_timeout};
@@ -647,10 +654,18 @@ sub assert_screen_with_soft_timeout {
     return assert_screen $mustmatch, $args{timeout} - $args{soft_timeout};
 }
 
+=head2 pkcon_quit
+
+TODO someone should document this
+=cut
 sub pkcon_quit {
     script_run("systemctl mask packagekit; systemctl stop packagekit; while pgrep packagekitd; do sleep 1; done");
 }
 
+=head2 addon_decline_license
+
+TODO someone should document this
+=cut
 sub addon_decline_license {
     if (get_var("HASLICENSE")) {
         if (check_screen 'next-button-is-active', 5) {
@@ -667,6 +682,10 @@ sub addon_decline_license {
     }
 }
 
+=head2 addon_license
+
+TODO someone should document this
+=cut
 sub addon_license {
     my ($addon)  = @_;
     my $uc_addon = uc $addon;                      # variable name is upper case
@@ -696,14 +715,34 @@ sub addon_license {
     send_key $cmd{next};
 }
 
+=head2 addon_products_is_applicable
+
+TODO some should document this
+=cut
 sub addon_products_is_applicable {
     return !get_var('LIVECD') && get_var('ADDONURL');
 }
 
+=head2 noupdatestep_is_applicable
+
+TODO someone should document this
+=cut
 sub noupdatestep_is_applicable {
     return !get_var("UPGRADE") && !get_var("LIVE_UPGRADE");
 }
 
+=head2 installwithaddonrepos_is_applicable
+
+TODO someone should document this
+=cut
+sub installwithaddonrepos_is_applicable {
+    return get_var("HAVE_ADDON_REPOS") && !get_var("UPGRADE") && !get_var("NET");
+}
+
+=head2 random_string
+
+returns a random string
+=cut
 sub random_string {
     my ($self, $length) = @_;
     $length //= 4;
@@ -711,78 +750,10 @@ sub random_string {
     return join '', map { @chars[rand @chars] } 1 .. $length;
 }
 
-=head2 handle_login
+=head2 handle_emergency
 
-  handle_login($myuser, $user_selected);
-
-Log the user in using the displaymanager.
-When C<$myuser> is set, this user will be used for login.
-Otherwise the function will default to C<$username>.
-For displaymanagers (like gnome) where the user needs to be selected
-from a menu C<$user_selected> tells the function that the desired
-user has already been selected before this function was called.
-
-Example:
-
-  handle_login('user1', 1);
-
+Handle emergency mode
 =cut
-sub handle_login {
-    my ($myuser, $user_selected) = @_;
-    $myuser        //= $username;
-    $user_selected //= 0;
-
-    save_screenshot();
-    # wait for DM, avoid screensaver and try to login
-    send_key_until_needlematch('displaymanager', 'esc', 30, 3);
-    wait_still_screen;
-    if (get_var('ROOTONLY')) {
-        if (check_screen 'displaymanager-username-notlisted', 10) {
-            record_soft_failure 'bgo#731320/boo#1047262 "not listed" Login screen for root user is not intuitive';
-            assert_and_click 'displaymanager-username-notlisted';
-            wait_still_screen 3;
-        }
-        type_string "root\n";
-    }
-    elsif (match_has_tag('displaymanager-user-prompt') || get_var('DM_NEEDS_USERNAME')) {
-        type_string "$myuser\n";
-    }
-    elsif (check_var('DESKTOP', 'gnome')) {
-        if ($user_selected || (is_sle('<15') || is_leap('<15.0'))) {
-            send_key 'ret';
-        }
-        # DMs in condition above have to select user
-        else {
-            select_user_gnome($myuser);
-        }
-    }
-    assert_screen 'displaymanager-password-prompt', no_wait => 1;
-    type_password;
-    send_key "ret";
-}
-
-sub handle_logout {
-    # hide mouse for clean logout needles
-    mouse_hide();
-    # logout
-    if (check_var('DESKTOP', 'gnome') || check_var('DESKTOP', 'lxde')) {
-        my $command = check_var('DESKTOP', 'gnome') ? 'gnome-session-quit' : 'lxsession-logout';
-        my $target_match = check_var('DESKTOP', 'gnome') ? undef : 'logoutdialog';
-        x11_start_program($command, target_match => $target_match);    # opens logout dialog
-    }
-    else {
-        my $key = check_var('DESKTOP', 'xfce') ? 'alt-f4' : 'ctrl-alt-delete';
-        send_key_until_needlematch 'logoutdialog', "$key";             # opens logout dialog
-    }
-    assert_and_click 'logout-button';                                  # press logout
-}
-
-sub handle_relogin {
-    handle_logout;
-    handle_login;
-}
-
-# Handle emergency mode
 sub handle_emergency {
     if (match_has_tag('emergency-shell')) {
         # get emergency shell logs for bug, scp doesn't work
@@ -830,9 +801,7 @@ Type slowly to run very long command in scripted way to avoid issue of 'key even
 Pass optional slow_type key to control how slow to type the command.
 Scripted very long command to shorten typing length.
 Default slow_type is type_string_slow.
-
 =cut
-
 sub run_scripted_command_slow {
     my ($cmd, %args) = @_;
     my $suffix = hashed_string("SO$cmd");
@@ -865,8 +834,8 @@ sub run_scripted_command_slow {
     clear_console;
 }
 
-
 =head2 get_root_console_tty
+
 Returns tty number used designed to be used for root-console.
 When console is not yet initialized, we cannot get it from arguments.
 Since SLE 15 gdm is running on tty2, so we change behaviour for it and
@@ -877,6 +846,7 @@ sub get_root_console_tty {
 }
 
 =head2 get_x11_console_tty
+
 Returns tty number used designed to be used for X.
 Since SLE 15 gdm is always running on tty7, currently the main GUI session
 is running on tty2 by default, except for Xen PV and Hyper-V (bsc#1086243).
@@ -894,6 +864,7 @@ sub get_x11_console_tty {
 }
 
 =head2  arrays_differ
+
 Comparing two arrays passed by reference. Return 1 if arrays has symmetric difference
 and 0 otherwise.
 =cut
@@ -908,13 +879,35 @@ sub arrays_differ {
     return 0;
 }
 
+=head2 arrays_subset
+
+    arrays_subset(\@array1, \@array2);
+
+Compares two arrays passed by reference to identify if array1 is a subset of
+array2.
+
+Returns resulting array containing items of array1 that do not exist in array2.
+If all the items of array1 exist in array2, returns an empty array (which means
+array1 is a subset of array2).
+=cut
+sub arrays_subset {
+    my ($array1_ref, $array2_ref) = @_;
+    my @result;
+    foreach my $item (@{$array1_ref}) {
+        push(@result, $item) if !grep($item eq $_, @{$array2_ref});
+    }
+    return @result;
+}
+
 =head2 ensure_serialdev_permissions
+
 Grant user permission to access serial port immediately as well as persisting
 over reboots. Used to ensure that testapi calls like script_run work for the
 test user as well as root.
 =cut
 sub ensure_serialdev_permissions {
     my ($self) = @_;
+    return if get_var('ROOTONLY');
     # ownership has effect immediately, group change is for effect after
     # reboot an alternative https://superuser.com/a/609141/327890 would need
     # handling of optional sudo password prompt within the exec
@@ -928,6 +921,7 @@ sub ensure_serialdev_permissions {
 }
 
 =head2 disable_serial_getty
+
 Serial getty service pollutes serial output with login propmt, which
 interferes with the output, e.g. when calling script_output.
 Login prompt messages on serial are used on some remote backend to
@@ -944,7 +938,7 @@ sub disable_serial_getty {
     return if script_run "systemctl is-enabled $service_name";
     systemctl "stop $service_name",    ignore_failure => 1;
     systemctl "disable $service_name", ignore_failure => 1;
-    record_info 'serial-getty', "Serial getty disabled for $testapi::serialdev";
+    record_info 'serial-getty',        "Serial getty disabled for $testapi::serialdev";
     # Mask if is qemu backend as use serial in remote installations e.g. during reboot
     systemctl "mask $service_name", ignore_failure => 1 if check_var('BACKEND', 'qemu');
     record_info 'serial-getty', "Serial getty mask for $testapi::serialdev";
@@ -957,7 +951,6 @@ sub disable_serial_getty {
  1. Execute a command that ask for a password
  2. Detects password prompt
  3. Insert password and hits enter
-
 =cut
 sub exec_and_insert_password {
     my ($cmd) = @_;
@@ -986,7 +979,8 @@ sub exec_and_insert_password {
 }
 
 =head2 shorten_url
-Shotren url via schort(s.qa.suse.de)
+
+Shorten url via schort(s.qa.suse.de)
 This is mainly used for autoyast url shorten to avoid limit of x3270 xedit
 =cut
 sub shorten_url {
@@ -1006,6 +1000,11 @@ sub shorten_url {
     }
 }
 
+
+=head2 _handle_lofin_not_found
+
+TODO someone should document this
+=cut
 sub _handle_login_not_found {
     my ($str) = @_;
     record_info 'Investigation', 'Expected welcome message not found, investigating bootup log content: ' . $str;
@@ -1035,6 +1034,7 @@ sub _handle_login_not_found {
 }
 
 =head2 reconnect_mgmt_console
+
 After each reboot we have to reconnect to the management console on remote backends
 =cut
 sub reconnect_mgmt_console {
@@ -1088,7 +1088,7 @@ sub reconnect_mgmt_console {
     elsif (check_var('ARCH', 'x86_64')) {
         if (check_var('BACKEND', 'ipmi')) {
             select_console 'sol', await_console => 0;
-            assert_screen "qa-net-selection", 300;
+            assert_screen [qw(qa-net-selection prague-pxe-menu)], 300;
             # boot to hard disk is default
             send_key 'ret';
         }
@@ -1098,26 +1098,31 @@ sub reconnect_mgmt_console {
     }
 }
 
-sub zypper_ar {
-    my ($url, $name) = @_;
+=head2 show_tasks_in_blocked_state
 
-    zypper_call("ar $url $name",                           dumb_term => 1);
-    zypper_call("--gpg-auto-import-keys ref --repo $name", dumb_term => 1);
-}
-
+TODO someone should document this
+=cut
 sub show_tasks_in_blocked_state {
     # sending sysrqs doesn't work for svirt
     if (!check_var('BACKEND', 'svirt')) {
         send_key 'alt-sysrq-w';
         # info will be sent to serial tty
-        wait_serial('SysRq : Show Blocked State', 1);
+        wait_serial(('SysRq : Show Blocked State', 'sysrq : Show Blocked State'), 1);
     }
 }
 
+=head2 svirt_host_basedir
+
+TODO someone should document this
+=cut
 sub svirt_host_basedir {
     return get_var('VIRSH_OPENQA_BASEDIR', '/var/lib');
 }
 
+=head2 prepare_ssh_localhost_key_login
+
+TODO someone should document this
+=cut
 sub prepare_ssh_localhost_key_login {
     my ($source_user) = @_;
     # in case localhost is already inside known_hosts
@@ -1140,6 +1145,33 @@ sub prepare_ssh_localhost_key_login {
     }
 }
 
+=head2 script_retry
+
+Repeat command until expected result or timeout
+script_retry 'ping -c1 -W1 machine', retry => 5
+=cut
+sub script_retry {
+    my ($cmd, %args) = @_;
+    my $ecode   = $args{expect}  // 0;
+    my $retry   = $args{retry}   // 10;
+    my $delay   = $args{delay}   // 30;
+    my $timeout = $args{timeout} // 25;
+    my $die     = $args{die}     // 1;
+
+    my $ret;
+    for (1 .. $retry) {
+        type_string "# Trying $_ of $retry:\n";
+
+        $ret = script_run "timeout $timeout $cmd";
+        last if defined($ret) && $ret == $ecode;
+
+        die("Waiting for Godot: $cmd") if $retry == $_ && $die == 1;
+        sleep $delay;
+    }
+
+    return $ret;
+}
+
 =head2 script_run_interactive
 
     script_run_interactive($cmd, $prompt, $timeout);
@@ -1157,35 +1189,46 @@ be matched (regex) and the answer with string or key to be typed. for example:
         string => "testpasspw\n",
       },]
 
-A "Script done." message comes from the typescript will be printed as a mark
+A "EOS~~~" message followed by return value will be printed as a mark
 for the end of interaction after the command finished running.
+
+If the first argument is undef, only the sencond part will be processed - to
+match output and react. If the second argument is undef, the first part will
+be processed - to run the command without interaction with terminal output.
+This is useful for some situation when you want to do more between inputing
+command and the following interaction, eg. switch TTYs or detach the screen.
 =cut
 sub script_run_interactive {
     my ($cmd, $scan, $timeout) = @_;
     my $output;
+    my $err_ret;
     my @words;
+    my $endmark = 'EOS~~~';    # EOS == "End of Script"
     $timeout //= 180;
 
     if ($cmd) {
-        script_run("script -c \'", 0);
-        script_run($cmd,           0);
-
-        # Write to /dev/null since we want not to leave file there
-        script_run("\' /dev/null |& tee /dev/$serialdev", 0);
+        script_run("(script -qe -a /dev/null -c \'", 0);
+        script_run($cmd,                             0);
+        # Can not get return value from script_run, so we have to do it in
+        # the shell with $? following the endmark.
+        script_run("\'; echo $endmark\$?) |& tee /dev/$serialdev", 0);
     }
+
+    return if (!$scan);
 
     for my $k (@$scan) {
         push(@words, $k->{prompt});
     }
 
-    my $endmark = "Script done.*\/dev\/null";
     push(@words, $endmark);
 
     {
         do {
             $output = wait_serial(\@words, $timeout) || die "No message matched!";
 
-            last if ($output =~ /$endmark/m);
+            last if ($output =~ /($endmark)0$/m);    # return value is 0
+            die  if ($output =~ /$endmark/m);        # other return values
+
             for my $i (@$scan) {
                 next if ($output !~ $i->{prompt});
                 if ($i->{string}) {
@@ -1202,6 +1245,52 @@ sub script_run_interactive {
             }
         } while ($output);
     }
+}
+
+=head2 create_btrfs_subvolume
+
+create btrfs subvolume for /boot/grub2/arm64-efi before migration.
+ref:bsc#1122591
+=cut
+sub create_btrfs_subvolume {
+    record_soft_failure 'bsc#1122591 - Create subvolume for aarch64 to make snapper rollback works';
+    assert_script_run("mv /boot/grub2/arm64-efi /boot/grub2/arm64-efi.bk");
+    assert_script_run("btrfs subvolume create /boot/grub2/arm64-efi");
+    assert_script_run("cp -r /boot/grub2/arm64-efi.bk/* /boot/grub2/arm64-efi/");
+    assert_script_run("rm -fr /boot/grub2/arm64-efi.bk");
+}
+
+
+=head2 file_content_replace
+
+  file_content_replace("filename",
+        regex_to_find => text_to_replace,
+        '--sed-modifier' => 'g',
+        'another^&&*(textToFind' => "replacement")
+
+  generify sed usage as config file modification tool.
+  allow to modify several items in one function call
+  by providing  regex_to_find / text_to_replace as hash key/value pairs
+
+  special key '--sed-modifier' allowing to add modifiers to expression
+  special key '--debug' allow to output full file content into serial. Disabled
+  by default
+=cut
+sub file_content_replace {
+    my ($filename, %to_replace) = @_;
+    $to_replace{'--sed-modifier'} //= '';
+    $to_replace{'--debug'}        //= 0;
+    my $sed_modifier = delete $to_replace{'--sed-modifier'};
+    my $debug        = delete $to_replace{'--debug'};
+    foreach my $key (keys %to_replace) {
+        my $value = $to_replace{$key};
+        $value =~ s/'/'"'"'/g;
+        $value =~ s'/'\/'g;
+        $key   =~ s/'/'"'"'/g;
+        $key   =~ s'/'\/'g;
+        assert_script_run(sprintf("sed -E 's/%s/%s/%s' -i %s", $key, $value, $sed_modifier, $filename));
+    }
+    script_run("cat $filename") if $debug;
 }
 
 1;

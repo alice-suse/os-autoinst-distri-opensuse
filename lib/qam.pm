@@ -10,6 +10,7 @@
 package qam;
 
 use strict;
+use warnings;
 
 use base "Exporter";
 use Exporter;
@@ -18,7 +19,7 @@ use testapi;
 use utils;
 
 our @EXPORT
-  = qw(capture_state check_automounter is_patch_needed add_test_repositories remove_test_repositories advance_installer_window get_patches check_patch_variables);
+  = qw(capture_state check_automounter is_patch_needed add_test_repositories ssh_add_test_repositories remove_test_repositories advance_installer_window get_patches check_patch_variables);
 
 sub capture_state {
     my ($state, $y2logs) = @_;
@@ -88,6 +89,28 @@ sub add_test_repositories {
     zypper_call('ref', exitcode => [0, 106]);
 }
 
+# Function that will add all test repos to SSH guest
+sub ssh_add_test_repositories {
+    my $host    = shift;
+    my $counter = 0;
+
+    my $oldrepo = get_var('PATCH_TEST_REPO');
+    my @repos   = split(/,/, get_var('MAINT_TEST_REPO', ''));
+    # Be carefull. If you have defined both variables, the PATCH_TEST_REPO variable will always
+    # have precedence over MAINT_TEST_REPO. So if MAINT_TEST_REPO is required to be installed
+    # please be sure that the PATCH_TEST_REPO is empty.
+    @repos = split(',', $oldrepo) if ($oldrepo);
+
+    for my $var (@repos) {
+        assert_script_run("ssh root\@$host 'zypper -n --no-gpg-check ar -f -n TEST_$counter $var TEST_$counter'");
+        $counter++;
+    }
+    # refresh repositories, inf 106 is accepted because repositories with test
+    # can be removed before test start
+    my $ret = script_run("ssh root\@$host 'zypper -n ref'", 240);
+    die "Zypper failed with $ret" if ($ret != 0 && $ret != 106);
+}
+
 # Function that will remove all test repos
 sub remove_test_repositories {
 
@@ -99,7 +122,7 @@ sub advance_installer_window {
     my ($screenName) = @_;
 
     send_key $cmd{next};
-    assert_screen $screenName;
+    assert_screen $screenName, 90;
 }
 
 # Get list of patches

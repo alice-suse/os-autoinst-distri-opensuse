@@ -10,8 +10,9 @@
 # Summary: Type in registration information
 # Maintainer: Martin Kravec <mkravec@suse.com>
 
+use base 'y2_installbase';
 use strict;
-use base "y2logsstep";
+use warnings;
 use testapi;
 
 sub run {

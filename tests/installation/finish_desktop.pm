@@ -14,6 +14,7 @@
 use base "installbasetest";
 use testapi;
 use strict;
+use warnings;
 
 # using this as base class means only run when an install is needed
 sub run {
@@ -28,10 +29,6 @@ sub run {
         send_key "esc";
         assert_screen "generic-desktop", 25;
     }
-}
-
-sub test_flags {
-    return {fatal => 1};
 }
 
 sub post_fail_hook {

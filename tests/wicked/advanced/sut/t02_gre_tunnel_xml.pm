@@ -15,14 +15,15 @@
 
 use base 'wickedbase';
 use strict;
+use warnings;
 use testapi;
 
 sub run {
-    my ($self) = @_;
+    my ($self, $ctx) = @_;
     my $config = '/etc/wicked/ifconfig/gre.xml';
     record_info('Info', 'Create a GRE interface from wicked XML files');
     $self->get_from_data('wicked/xml/gre.xml', $config);
-    $self->setup_tunnel($config, 'gre1');
+    $self->setup_tunnel($config, 'gre1', $ctx->iface());
     my $res = $self->get_test_result('gre1');
     die if ($res eq 'FAILED');
 }

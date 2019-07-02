@@ -11,8 +11,9 @@
 # Maintainer: mgriessmeier <mgriessmeier@suse.com>, Nick Singer <nsinger@suse.de>
 # Tags: fate#323273, poo#26786
 
+use base 'y2_installbase';
 use strict;
-use base "y2logsstep";
+use warnings;
 use testapi;
 use version_utils ':VERSION';
 

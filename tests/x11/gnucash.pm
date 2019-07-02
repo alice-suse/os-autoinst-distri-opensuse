@@ -13,6 +13,7 @@
 
 use base "x11test";
 use strict;
+use warnings;
 use testapi;
 use version_utils 'is_leap';
 
@@ -22,13 +23,16 @@ sub run {
     ensure_installed('gnucash gnucash-docs yelp');
     x11_start_program('gnucash', target_match => [qw(gnucash gnucash-tip-close gnucash-assistant-close)]);
     if (match_has_tag('gnucash-tip-close')) {
-        assert_and_click 'gnucash-tip-close';
+        send_key 'esc';
         assert_screen([qw(gnucash gnucash-assistant-close)]);
     }
     if (match_has_tag('gnucash-assistant-close')) {
         assert_and_click 'gnucash-assistant-close';
         assert_and_click 'gnucash-assistant-show-again-no';
-        assert_screen('gnucash');
+        assert_screen([qw(gnucash gnucash-tip-close)]);
+        if (match_has_tag('gnucash-tip-close')) {
+            send_key 'esc';
+        }
     }
     # < gnucash 3.3
     else {

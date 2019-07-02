@@ -1,4 +1,4 @@
-# Copyright © 2016 SUSE LLC
+# Copyright © 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -10,6 +10,7 @@
 
 use base "consoletest";
 use strict;
+use warnings;
 use testapi;
 use utils;
 use version_utils qw(is_sle is_desktop_installed is_upgrade is_sles4sap);
@@ -60,6 +61,8 @@ sub patching_sle {
         if (!get_var('UPGRADE_ON_ZVM')) {
             # Perform sync ahead of reboot to flush filesystem buffers
             assert_script_run 'sync', 600;
+            # Open gdm debug info for poo#45236, this issue happen sometimes in openqa env
+            script_run('sed -i s/#Enable=true/Enable=true/g /etc/gdm/custom.conf');
             # Workaround for test failed of the reboot operation need to wait some jobs done
             # Add '-f' to force the reboot to avoid the test be blocked here
             type_string "reboot -f\n";
@@ -78,6 +81,9 @@ sub patching_sle {
     # Install salt packages as required
     install_salt_packages() if (check_var_array('SCC_ADDONS', 'asmm'));
 
+    # create btrfs subvolume for aarch64
+    create_btrfs_subvolume() if (check_var('ARCH', 'aarch64'));
+
     # Remove test repos after system being patched
     remove_test_repositories;
 
@@ -94,7 +100,10 @@ sub patching_sle {
         sle_register("unregister");
     }
 
-    assert_script_run("zypper mr --enable --all");
+    # RMT didn't mirror all repos, cannot use enable all
+    if (!get_var("SMT_URL")) {
+        assert_script_run("zypper mr --enable --all");
+    }
 
     # Disable old repositories during AutoYaST driven upgrade
     if (get_var('AUTOUPGRADE')) {

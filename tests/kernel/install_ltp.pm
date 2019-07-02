@@ -14,6 +14,8 @@ use 5.018;
 use warnings;
 use base 'opensusebasetest';
 use File::Basename 'basename';
+use LWP::Simple 'head';
+
 use testapi;
 use registration;
 use utils;
@@ -23,6 +25,7 @@ use power_action_utils 'power_action';
 use serial_terminal 'add_serial_console';
 use upload_system_log;
 use version_utils qw(is_sle is_opensuse is_jeos);
+use Utils::Backends 'use_ssh_serial_console';
 
 sub add_repos {
     my $qa_head_repo = get_required_var('QA_HEAD_REPO');
@@ -33,13 +36,15 @@ sub add_we_repo_if_available {
     # opensuse doesn't have extensions
     return if check_var('DISTRI', 'opensuse');
 
-    my $ar_url;
-    my $we_repo = get_var('REPO_SLE_WE_POOL');
-    if ($we_repo && is_sle('15+')) {
-        $ar_url = "http://openqa.suse.de/assets/repo/$we_repo";
+    my ($ar_url, $we_repo);
+    $we_repo = get_var('REPO_SLE_PRODUCT_WE');
+    $we_repo = get_var('REPO_SLE_WE') if (!$we_repo);
+    if ($we_repo) {
+        $ar_url = "$utils::OPENQA_FTP_URL/$we_repo";
     }
-    # productQA test with enabled we as iso_2
-    elsif (get_var('BUILD_WE') && get_var('ISO_2')) {
+
+    # productQA test with enabled WE as iso_2
+    if (!head($ar_url) && get_var('BUILD_WE') && get_var('ISO_2')) {
         $ar_url = 'dvd:///?devices=/dev/sr2';
     }
     if ($ar_url) {
@@ -67,6 +72,7 @@ sub install_runtime_dependencies {
       apparmor-parser
       apparmor-utils
       audit
+      bc
       binutils
       dosfstools
       evmctl
@@ -84,6 +90,18 @@ sub install_runtime_dependencies {
       tpm-tools
       wget
       xfsprogs
+    );
+    for my $dep (@maybe_deps) {
+        script_run('zypper -n -t in ' . $dep . ' | tee');
+    }
+}
+
+sub install_debugging_tools {
+    my @maybe_deps = qw(
+      attr
+      gdb
+      ltrace
+      strace
     );
     for my $dep (@maybe_deps) {
         script_run('zypper -n -t in ' . $dep . ' | tee');
@@ -210,19 +228,9 @@ sub install_from_repo {
 sub setup_network {
     my $content;
 
-    $content = <<EOF;
-# ltp specific setup
-pts/1
-pts/2
-pts/3
-pts/4
-pts/5
-pts/6
-pts/7
-pts/8
-pts/9
-EOF
-    assert_script_run("echo \"$content\" >> '/etc/securetty'");
+    # pts in /etc/securetty
+    $content = '# ltp specific setup\npts/1\npts/2\npts/3\npts/4\npts/5\npts/6\npts/7\npts/8\npts/9\n';
+    assert_script_run("printf \"$content\" >> /etc/securetty");
 
     # ftp
     assert_script_run('sed -i \'s/^\s*\(root\)\s*$/# \1/\' /etc/ftpusers');
@@ -242,7 +250,7 @@ EOF
     # SLE12GA uses too many old style services
     my $action = check_var('VERSION', '12') ? "enable" : "reenable";
 
-    foreach my $service (qw(auditd dnsmasq nfsserver rpcbind vsftpd)) {
+    foreach my $service (qw(auditd dnsmasq nfs-server rpcbind vsftpd)) {
         if (is_sle('12+') || is_opensuse || is_jeos) {
             systemctl($action . " " . $service);
             assert_script_run("systemctl start $service || { systemctl status --no-pager $service; journalctl -xe --no-pager; false; }");
@@ -272,7 +280,13 @@ sub run {
         select_console('root-console');
         add_serial_console('hvc1');
     }
-    $self->select_serial_terminal;
+
+    if (check_var('BACKEND', 'ipmi')) {
+        use_ssh_serial_console;
+    }
+    else {
+        $self->select_serial_terminal;
+    }
 
     if (script_output('cat /sys/module/printk/parameters/time') eq 'N') {
         script_run('echo 1 > /sys/module/printk/parameters/time');
@@ -295,8 +309,10 @@ sub run {
     }
 
     add_custom_grub_entries if (is_sle('12+') || is_opensuse) && !is_jeos;
+
     install_runtime_dependencies;
     install_runtime_dependencies_network;
+    install_debugging_tools;
 
     if ($inst_ltp =~ /git/i) {
         install_build_dependencies;
@@ -309,7 +325,7 @@ sub run {
         install_from_repo($tag);
     }
 
-    setup_network();
+    setup_network;
 
     upload_runtest_files('${LTPROOT:-/opt/ltp}/runtest', $tag);
 

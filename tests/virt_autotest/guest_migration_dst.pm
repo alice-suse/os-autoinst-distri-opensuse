@@ -13,6 +13,7 @@
 
 use base multi_machine_job_base;
 use strict;
+use warnings;
 use testapi;
 use lockapi;
 use mmapi;
@@ -49,7 +50,7 @@ sub run {
     $self->workaround_for_reverse_lock("SRC_TEST_DONE", $src_test_timeout);
     script_run("xl dmesg > /tmp/xl-dmesg.log");
     my $logs = "/var/log/libvirt /var/log/messages /var/log/xen /var/lib/xen/dump /tmp/xl-dmesg.log";
-    &virt_autotest_base::upload_virt_logs($logs, "guest-migration-dst-logs");
+    virt_autotest_base::upload_virt_logs($logs, "guest-migration-dst-logs");
 
     #mark dst upload log done
     mutex_create('DST_UPLOAD_LOG_DONE');

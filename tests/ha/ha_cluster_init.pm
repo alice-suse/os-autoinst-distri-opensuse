@@ -12,6 +12,7 @@
 
 use base 'opensusebasetest';
 use strict;
+use warnings;
 use testapi;
 use lockapi;
 use hacluster;
@@ -25,11 +26,14 @@ sub run {
     my $unicast_opt   = get_var("HA_UNICAST") ? '-u' : '';
     my $quorum_policy = 'stop';
     my $join_timeout  = 60;
+    my $fencing_opt   = "-s $sbd_device";
 
     # If we failed to initialize the cluster, trying again but in debug mode
     # Note: the default timeout need to be increase because it can takes time to join the cluster
-    if (script_run "ha-cluster-init -y -s $sbd_device $unicast_opt", $join_timeout) {
-        assert_script_run "crm -dR cluster init -y -s $sbd_device $unicast_opt", $join_timeout;
+    # Initialize the cluster with diskless or shared storage SBD (default)
+    $fencing_opt = '-S' if (get_var('USE_DISKLESS_SBD'));
+    if (script_run "ha-cluster-init -y $fencing_opt $unicast_opt", $join_timeout) {
+        assert_script_run "crm -dR cluster init -y $fencing_opt $unicast_opt", $join_timeout;
     }
 
     # Signal that the cluster stack is initialized
@@ -44,10 +48,10 @@ sub run {
     assert_script_run "crm configure property no-quorum-policy=$quorum_policy";
 
     # Execute csync2 to synchronise the configuration files
-    assert_script_run 'csync2 -v -x -F';
+    exec_csync;
 
-    # State of SBD
-    assert_script_run "sbd -d $sbd_device list";
+    # State of SBD if shared storage SBD is used
+    assert_script_run "sbd -d $sbd_device list" unless (get_var('USE_DISKLESS_SBD'));
 
     # Check if the multicast port is correct (should be 5405 or 5407 by default)
     assert_script_run "grep -Eq '^[[:blank:]]*mcastport:[[:blank:]]*(5405|5407)[[:blank:]]*' $corosync_conf";

@@ -1,9 +1,10 @@
 package opensusebasetest;
 use base 'basetest';
 
-use bootloader_setup qw(stop_grub_timeout boot_local_disk tianocore_enter_menu zkvm_add_disk zkvm_add_pty zkvm_add_interface type_hyperv_fb_video_resolution);
+use bootloader_setup qw(stop_grub_timeout boot_local_disk tianocore_enter_menu zkvm_add_disk zkvm_add_pty zkvm_add_interface);
 use testapi;
 use strict;
+use warnings;
 use utils;
 use lockapi 'mutex_wait';
 use serial_terminal 'get_login_message';
@@ -41,6 +42,13 @@ sub save_and_upload_log {
     script_run("$cmd | tee $file", $args->{timeout});
     upload_logs($file) unless $args->{noupload};
     save_screenshot if $args->{screenshot};
+}
+
+sub tar_and_upload_log {
+    my ($self, $sources, $dest, $args) = @_;
+    script_run("tar -jcv -f $dest $sources", $args->{timeout});
+    upload_logs($dest) unless $args->{noupload};
+    save_screenshot() if $args->{screenshot};
 }
 
 sub save_and_upload_systemd_unit_log {
@@ -140,25 +148,172 @@ sub investigate_yast2_failure {
         record_info 'Likely error detected: badlist', "badlist content:\n\n$badlist", result => 'fail';
         $error_detected = 1;
     }
-    # Array with possible strings to search in YaST2 logs
-    my @y2log_errors = (
-        'Internal error. Please report a bug report',    # Detecting errors
-        '<3>',                                           # Detecting problems using error code
-        'No textdomain configured',                      # Detecting missing translations
-        'nothing provides',                              # Detecting missing required packages
-        'but this requirement cannot be provided',       # and package conflicts
-        'Could not load icon',                           # Detecting missing icons
-        'Couldn\'t load pixmap'                          # additionally with this line, but if not caught with the message above
+    # Hash with critical errors in YaST2 and bug reference if any
+    my %y2log_errors = (
+        "<3>.*Cannot parse the data from server"     => 'bsc#1126045',
+        "No textdomain configured"                   => 'bsc#1127756',    # Detecting missing translations
+                                                                          # Detecting specifi errors proposed by the YaST dev team
+        "nothing provides"                           => undef,            # Detecting missing required packages
+        "but this requirement cannot be provided"    => undef,            # Detecting package conflicts
+        "Could not load icon|Couldn't load pixmap"   => undef,            # Detecting missing icons
+        "Internal error. Please report a bug report" => undef,            # Detecting internal errors
     );
-    for my $y2log_error (@y2log_errors) {
-        if (my $y2log_error_result = script_output 'grep -B 3 "' . $y2log_error . '" /var/log/YaST2/y2log | tail -n 20 || true') {
-            record_info 'YaST2 log error detected', "Details:\n\n$y2log_error_result", result => 'fail';
-            $error_detected = 1;
+    # Hash with known errors which we don't want to track in each postfail hook
+    my %y2log_known_errors = (
+        "<3>.*no[t]? mount" => 'bsc#1092088',                             # Detect not mounted partition
+
+        # The error below will be cleaned up, see https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup
+        # Adding reference to trello, detect those in single scenario
+        "<3>.*Error output: dracut:"                            => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Reading install.inf"                              => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*shellcommand"                                     => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*libstorage.*device not found"                     => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*lib/cheetah.rb.*Error output"                     => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Slides.rb.*Directory.*does not exist"             => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*agent-ini.*(Can not open|Unable to stat)"         => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Interpreter.*File not found"                      => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Interpreter.*Couldn't find an agent"              => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Interpreter.*Read.*failed"                        => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*ag_uid.*argument is not a path"                   => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*ag_uid.*wrong command"                            => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Interpreter.*'Syslog' failed"                     => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*libycp.*No matching component found"              => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Perl.*Perl call of Log"                           => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Y2Ruby.*SSHAuthorizedKeys.write_keys failed"      => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Directory.* does not exist"                       => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Cannot find the installed base product"           => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Can not open"                                     => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*File not found"                                   => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Created symlink"                                  => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Unable to stat"                                   => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*cannot access"                                    => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*hostname: Temporary failure in name resolution"   => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*hostname: Name or service not known"              => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Couldn't find an agent to handle"                 => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Read.*failed:"                                    => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*SCR::Read"                                        => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Failed to get unit file state for"                => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Running in chroot, ignoring request"              => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*The first argument is not a path"                 => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*wrong command (SetRoot), only Read is accepted"   => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Loading module.*failed"                           => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*No matching component found"                      => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*for a Perl call of Log"                           => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*SSHAuthorizedKeys.write_keys failed"              => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*warning: Discarding improperly nested partition"  => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*device not found, name"                           => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Wrong source ID"                                  => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Argument.*nil.*to Write.*is nil"                  => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*UI::ChangeWidget failed"                          => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Error on key label of widget"                     => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*inhibit udisks failed"                            => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Command not found"                                => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*converting.*to enum failed"                       => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*No release notes URL for"                         => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*btrfs subvolume not found"                        => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Widget id.*is not unique"                         => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*has no item with ID"                              => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Label has no shortcut or more than 1 shortcuts"   => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*diff failed"                                      => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Failed to stat"                                   => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Bad directive: options"                           => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*OPEN_FAILED opening"                              => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*rpmdbInit error"                                  => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<5>.*Failed to initialize database"                    => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "(<3>|<5>).*Rpm Exception"                              => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Cleanup on error"                                 => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Can't import namespace 'YaPI::SubscriptionTools'" => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Can't find YCP client component wrapper_storage"  => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*ChangeVolumeProperties device"                    => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*can't find 'keyboard_raw_sles.ycp'"               => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*error accessing /usr/sbin/xfs_repair"             => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*home_path in control.xml does not start with /"   => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*CopyFilesToTemp\\(\\) needs to be called first"   => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*X11 configuration not written"                    => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Forcing /libQtGui.so.5 open failed"               => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*can't find 'consolefonts_sles.ycp'"               => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Could not import key.*Subprocess failed"          => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*baseproduct symlink is dangling or missing"       => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*falling back to @\\{DEFAULT_HOME_PATH\\}"         => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        # libzypp errors
+        "<3>.*The requested URL returned error" => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<3>.*Not adding cache"                 => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<5>.*Repository not found"             => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<5>.*File.*not found on medium"        => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<5>.*Login failed."                    => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<5>.*Path.*on medium"                  => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<5>.*Aborting requested by user"       => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+        "<5>.*Exception.cc"                     => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
+    );
+
+    my $delimiter = '=========================================';
+    # Do not report issues we accepted to detect regressions in all scenarios
+    my @detected_errors = ();
+    if (get_var('ASSERT_Y2LOGS')) {
+        %y2log_errors = (%y2log_errors, %y2log_known_errors);
+    } else {
+        @detected_errors = (keys %y2log_known_errors);
+    }
+    # Test if zgrep is available
+    my $is_zgrep_available = (script_output('type zgrep') == 0);
+    my $cmd_prefix         = ($is_zgrep_available ? 'zgrep' : 'grep');
+    # If zgrep is available, using wildcard to search in rolled archives,
+    # And only in y2log in case of grep
+    my $logs_path   = '/var/log/YaST2/';
+    my $cmd_postfix = $logs_path . ($is_zgrep_available ? 'y2log*' : 'y2log') . ' || true';
+    # String to accumulate unknown detected issues
+    my $detected_errors_detailed = '';
+    for my $y2log_error (keys %y2log_errors) {
+        if (my $y2log_error_result = script_output("$cmd_prefix -C 5 -E \"$y2log_error\" $cmd_postfix")) {
+            # Save detected error to indetify if have new regressions
+            push @detected_errors, $y2log_error;
+            if (my $bug = $y2log_errors{$y2log_error}) {
+                record_soft_failure("$bug\n\nDetails:\n$y2log_error_result");
+                next;
+            }
+            $detected_errors_detailed .= "$y2log_error_result\n\n$delimiter\n\n";
         }
     }
-    if (get_var('ASSERT_Y2LOGS') && $error_detected) {
-        die "YaST2 error(s) detected. Please, check details";
+    ## Check generic erros and exclude already detected issues
+    if (my $y2log_error_result = script_output("$cmd_prefix -E \"<3>|<5>\" $cmd_postfix")) {
+        # remove known errors from the log
+        for my $known_error (@detected_errors) {
+            $y2log_error_result =~ s/.*${known_error}.*//g;
+        }
+        # remove empty lines
+        $y2log_error_result =~ s/\n+/\n/gs;
+        $detected_errors_detailed .= "$y2log_error_result\n" if $y2log_error_result !~ m/^(\n|\s)*$/;
     }
+
+    # Send last lines to serial to copy in case of new critical bugs
+    # If yast log file exists
+    if (script_run("test -e $logs_path/y2log") == 0) {
+        type_string "echo $delimiter > /dev/$serialdev\n";
+        type_string "echo 'YaST LOGS' > /dev/$serialdev\n";
+        type_string "tail -n 150 $logs_path/y2log > /dev/$serialdev\n";
+        type_string "echo $delimiter > /dev/$serialdev\n";
+    }
+    if ($detected_errors_detailed) {
+        record_info(
+            'YaST2 log errors',
+            "Please, file a bug(s) with expected error. Details:\n\n$detected_errors_detailed",
+            result => 'fail'
+        );
+
+        if (get_var('ASSERT_Y2LOGS')) {
+            die "YaST2 error(s) detected. Please, check details";
+        }
+    }
+}
+
+# Logs that make sense for any failure
+sub export_logs_basic {
+    my ($self) = @_;
+    $self->save_and_upload_log('cat /proc/loadavg', '/tmp/loadavg.txt', {screenshot => 1});
+    $self->save_and_upload_log('ps axf',            '/tmp/psaxf.log',   {screenshot => 1});
+    $self->save_and_upload_log('journalctl -b',     '/tmp/journal.log', {screenshot => 1});
+    $self->save_and_upload_log('dmesg',             '/tmp/dmesg.log',   {screenshot => 1});
+    $self->tar_and_upload_log('/etc/sysconfig', '/tmp/sysconfig.tar.bz2');
 }
 
 sub export_logs {
@@ -168,26 +323,15 @@ sub export_logs {
     $self->remount_tmp_if_ro;
     $self->problem_detection;
 
-    $self->save_and_upload_log('cat /proc/loadavg', '/tmp/loadavg.txt', {screenshot => 1});
-    $self->save_and_upload_log('journalctl -b',     '/tmp/journal.log', {screenshot => 1});
-    $self->save_and_upload_log('ps axf',            '/tmp/psaxf.log',   {screenshot => 1});
+    $self->export_logs_basic;
 
     # Just after the setup: let's see the network configuration
     $self->save_and_upload_log("ip addr show", "/tmp/ip-addr-show.log");
 
     save_screenshot;
 
-    # check whether xorg logs is exists in user's home, if yes, upload xorg logs from user's
-    # home instead of /var/log
-    script_run "test -d /home/*/.local/share/xorg ; echo user-xlog-path-\$? > /dev/$serialdev", 0;
-    if (wait_serial("user-xlog-path-0", 10)) {
-        $self->save_and_upload_log('cat /home/*/.local/share/xorg/X*', '/tmp/Xlogs.log', {screenshot => 1});
-    }
-    else {
-        $self->save_and_upload_log('cat /var/log/X*', '/tmp/Xlogs.log', {screenshot => 1});
-    }
+    $self->export_logs_desktop;
 
-    $self->upload_xsession_errors_log;
     $self->save_and_upload_log('systemctl list-unit-files', '/tmp/systemctl_unit-files.log');
     $self->save_and_upload_log('systemctl status',          '/tmp/systemctl_status.log');
     $self->save_and_upload_log('systemctl',                 '/tmp/systemctl.log', {screenshot => 1});
@@ -197,15 +341,11 @@ sub export_logs {
     $self->investigate_yast2_failure();
 }
 
-sub upload_xsession_errors_log {
-    my ($self) = @_;
-    # do not upload empty .xsession-errors
-    script_run "xsefiles=(/home/*/{.xsession-errors*,.local/share/sddm/*session.log}); "
-      . "for file in \${xsefiles[@]}; do if [ -s \$file ]; then echo xsefile-valid > /dev/$serialdev; fi; done",
-      0;
-    if (wait_serial("xsefile-valid", 10)) {
-        $self->save_and_upload_log('cat /home/*/{.xsession-errors*,.local/share/sddm/*session.log}', '/tmp/XSE.log', {screenshot => 1});
-    }
+sub export_logs_locale {
+    my ($self) = shift;
+    $self->save_and_upload_log('locale',                 '/tmp/locale.log');
+    $self->save_and_upload_log('localectl status',       '/tmp/localectl.log');
+    $self->save_and_upload_log('cat /etc/vconsole.conf', '/tmp/vconsole.conf');
 }
 
 sub upload_packagekit_logs {
@@ -219,55 +359,42 @@ sub set_standard_prompt {
     $testapi::distri->set_standard_prompt($user);
 }
 
-sub select_bootmenu_more {
-    my ($self, $tag, $more) = @_;
-
-    # do not waste time waiting when we already matched
-    assert_screen 'inst-bootmenu', 15 unless match_has_tag 'inst-bootmenu';
-    stop_grub_timeout;
-
-    # after installation-images 14.210 added a submenu
-    if ($more && check_screen 'inst-submenu-more', 0) {
-        send_key_until_needlematch('inst-onmore', get_var('OFW') ? 'up' : 'down', 10, 5);
-        send_key "ret";
-    }
-    send_key_until_needlematch($tag, get_var('OFW') ? 'up' : 'down', 10, 3);
-    if (get_var('UEFI')) {
-        send_key 'e';
-        send_key 'down' for (1 .. 4);
-        send_key 'end';
-        # newer versions of qemu on arch automatically add 'console=ttyS0' so
-        # we would end up nowhere. Setting console parameter explicitly
-        # See https://bugzilla.suse.com/show_bug.cgi?id=1032335 for details
-        type_string_slow ' console=tty1' if get_var('MACHINE') =~ /aarch64/;
-        # Hyper-V defaults to 1280x1024, we need to fix it here
-        type_hyperv_fb_video_resolution if check_var('VIRSH_VMM_FAMILY', 'hyperv');
-        send_key 'f10';
-    }
-    else {
-        type_hyperv_fb_video_resolution if check_var('VIRSH_VMM_FAMILY', 'hyperv');
-        send_key 'ret';
-    }
-}
-
-sub export_kde_logs {
+sub export_logs_desktop {
+    my ($self) = @_;
     select_console 'log-console';
     save_screenshot;
 
     if (check_var("DESKTOP", "kde")) {
         if (get_var('PLASMA5')) {
-            my $fn  = '/tmp/plasma5_configs.tar.bz2';
-            my $cmd = sprintf 'tar cjf %s /home/%s/.config/*rc', $fn, $username;
-            type_string "$cmd\n";
-            upload_logs $fn;
+            $self->tar_and_upload_log("/home/$username/.config/*rc", '/tmp/plasma5_configs.tar.bz2');
         }
         else {
-            my $fn  = '/tmp/kde4_configs.tar.bz2';
-            my $cmd = sprintf 'tar cjf %s /home/%s/.kde4/share/config/*rc', $fn, $username;
-            type_string "$cmd\n";
-            upload_logs $fn;
+            $self->tar_and_upload_log("/home/$username/.kde4/share/config/*rc", '/tmp/kde4_configs.tar.bz2');
         }
         save_screenshot;
+    } elsif (check_var("DESKTOP", "gnome")) {
+        $self->tar_and_upload_log('/home/bernhard/.cache/gdm', '/tmp/gdm.tar.bz2');
+    }
+
+    # check whether xorg logs exist in user's home, if yes, upload xorg logs
+    # from user's home instead of /var/log
+    my $log_path = '/home/*/.local/share/xorg/';
+    if (!script_run("test -d $log_path")) {
+        $self->tar_and_upload_log("$log_path", '/tmp/Xlogs.users.tar.bz2', {screenshot => 1});
+    }
+    $log_path = '/var/log/X*';
+    if (!script_run("ls -l $log_path")) {
+        $self->save_and_upload_log("cat $log_path", '/tmp/Xlogs.system.log', {screenshot => 1});
+    }
+
+    # do not upload empty .xsession-errors
+    $log_path = '/home/*/.xsession-errors*';
+    if (!script_run("ls -l $log_path")) {
+        $self->save_and_upload_log("cat $log_path", '/tmp/xsession-errors.log', {screenshot => 1});
+    }
+    $log_path = '/home/*/.local/share/sddm/*session.log';
+    if (!script_run("ls -l $log_path")) {
+        $self->save_and_upload_log("cat $log_path", '/tmp/sddm_session.log', {screenshot => 1});
     }
 }
 
@@ -281,21 +408,111 @@ sub handle_uefi_boot_disk_workaround {
     wait_screen_change { send_key 'ret' };
     send_key_until_needlematch 'tianocore-boot_from_file', 'down';
     wait_screen_change { send_key 'ret' };
-    save_screenshot;
+    # Device selection: HD or CDROM
+    send_key_until_needlematch 'tianocore-select_HD', 'down';
     wait_screen_change { send_key 'ret' };
     # cycle to last entry by going up in the next steps
     # <EFI>
     send_key 'up';
     save_screenshot;
     wait_screen_change { send_key 'ret' };
-    # <sles>
+    # <sles> or <opensuse>
     send_key 'up';
     save_screenshot;
     wait_screen_change { send_key 'ret' };
     # efi file
-    send_key 'up';
-    save_screenshot;
+    send_key_until_needlematch 'tianocore-select_grubaa64_efi', 'up';
     wait_screen_change { send_key 'ret' };
+}
+
+=head2 wait_grub
+
+  wait_grub([bootloader_time => $bootloader_time] [,in_grub => $in_grub]);
+
+Makes sure the bootloader appears. Returns successfully when reached the bootloader menu, ready to control it further or continue. The time waiting for the bootloader can be configured with
+C<$bootloader_time> in seconds. Set C<$in_grub> to 1 when the
+SUT is already expected to be within the grub menu.
+=cut
+sub wait_grub {
+    my ($self, %args) = @_;
+    my $bootloader_time = $args{bootloader_time} // 100;
+    my $in_grub         = $args{in_grub}         // 0;
+    my @tags            = ('grub2');
+    push @tags, 'bootloader-shim-import-prompt'   if get_var('UEFI');
+    push @tags, 'boot-live-' . get_var('DESKTOP') if get_var('LIVETEST');             # LIVETEST won't to do installation and no grub2 menu show up
+    push @tags, 'bootloader'                      if get_var('OFW');
+    push @tags, 'encrypted-disk-password-prompt'  if get_var('ENCRYPT');
+    push @tags, 'linux-login'                     if get_var('KEEP_GRUB_TIMEOUT');    # Also wait for linux-login if grub timeout was not disabled
+    if (get_var('ONLINE_MIGRATION')) {
+        push @tags, 'migration-source-system-grub2';
+    }
+    # after gh#os-autoinst/os-autoinst#641 68c815a "use bootindex for boot
+    # order on UEFI" the USB install medium is priority and will always be
+    # booted so we have to handle that
+    # because of broken firmware, bootindex doesn't work on aarch64 bsc#1022064
+    push @tags, 'inst-bootmenu'
+      if (get_var('USBBOOT') && get_var('UEFI')
+        || (check_var('ARCH', 'aarch64') && get_var('UEFI'))
+        || get_var('OFW')
+        || (check_var('BOOTFROM', 'd')));
+    # Enable all migration path on aarch64
+    # Refer to ticket: https://progress.opensuse.org/issues/49340
+    $self->handle_uefi_boot_disk_workaround
+      if (is_aarch64_uefi_boot_hdd
+        && !$in_grub
+        && (!(isotovideo::get_version() >= 12 && get_var('UEFI_PFLASH_VARS')) || get_var('ONLINE_MIGRATION') || get_var('UPGRADE') || get_var('ZDUP')));
+    assert_screen(\@tags, $bootloader_time);
+    if (match_has_tag("bootloader-shim-import-prompt")) {
+        send_key "down";
+        send_key "ret";
+        assert_screen "grub2", 15;
+    }
+    elsif (get_var("LIVETEST")) {
+        # prevent if one day booting livesystem is not the first entry of the boot list
+        if (!match_has_tag("boot-live-" . get_var("DESKTOP"))) {
+            send_key_until_needlematch("boot-live-" . get_var("DESKTOP"), 'down', 10, 5);
+        }
+    }
+    elsif (match_has_tag('inst-bootmenu')) {
+        $self->wait_grub_to_boot_on_local_disk;
+    }
+    elsif (match_has_tag('encrypted-disk-password-prompt')) {
+        # unlock encrypted disk before grub
+        workaround_type_encrypted_passphrase;
+        assert_screen "grub2", 15;
+    }
+    # If KEEP_GRUB_TIMEOUT is set, SUT may be at linux-login already, so no need to abort in that case
+    elsif (!match_has_tag("grub2") and !match_has_tag('linux-login')) {
+        # check_screen timeout
+        my $failneedle = get_var('KEEP_GRUB_TIMEOUT') ? 'linux-login' : 'grub2';
+        die "needle '$failneedle' not found";
+    }
+    mutex_wait 'support_server_ready' if get_var('USE_SUPPORT_SERVER');
+}
+
+=head2 wait_grub_to_boot_on_local_disk
+
+  wait_grub_to_boot_on_local_disk
+
+When bootloader appears, make sure to boot from local disk when it is on aarch64.
+=cut
+sub wait_grub_to_boot_on_local_disk {
+    # assuming the cursor is on 'installation' by default and 'boot from
+    # harddisk' is above
+    send_key_until_needlematch 'inst-bootmenu-boot-harddisk', 'up';
+    boot_local_disk;
+    my @tags = qw(grub2 tianocore-mainmenu);
+    push @tags, 'encrypted-disk-password-prompt' if (get_var('ENCRYPT'));
+
+    assert_screen(\@tags, 15);
+    if (match_has_tag('tianocore-mainmenu')) {
+        opensusebasetest::handle_uefi_boot_disk_workaround();
+        check_screen('encrypted-disk-password-prompt', 10);
+    }
+    if (match_has_tag('encrypted-disk-password-prompt')) {
+        workaround_type_encrypted_passphrase;
+        assert_screen('grub2');
+    }
 }
 
 =head2 wait_boot
@@ -320,11 +537,13 @@ sub wait_boot {
     my ($self, %args) = @_;
     my $bootloader_time = $args{bootloader_time} // 100;
     my $textmode        = $args{textmode};
-    my $ready_time      = $args{ready_time} // 200;
+    my $ready_time      = $args{ready_time} // 300;
     my $in_grub         = $args{in_grub} // 0;
     my $nologin         = $args{nologin};
     my $forcenologin    = $args{forcenologin};
+    my $linux_boot_entry //= 14;
 
+    die "wait_boot: got undefined class" unless $self;
     # used to register a post fail hook being active while we are waiting for
     # boot to be finished to help investigate in case the system is stuck in
     # shutting down or booting up
@@ -332,6 +551,14 @@ sub wait_boot {
 
     # Reset the consoles after the reboot: there is no user logged in anywhere
     reset_consoles;
+    # For IPMI machines PXE boot menu will appear first
+    # If KEEP_GRUB_TIMEOUT is set, SUT could be already in linux-login
+    if (check_var('BACKEND', 'ipmi') and !get_var('KEEP_GRUB_TIMEOUT')) {
+        select_console 'sol', await_console => 0;
+        # boot from harddrive
+        assert_screen([qw(virttest-pxe-menu qa-net-selection prague-pxe-menu pxe-menu)], 200);
+        send_key 'ret';
+    }
     # reconnect s390
     if (check_var('ARCH', 's390x')) {
         my $login_ready = get_login_message();
@@ -386,78 +613,23 @@ sub wait_boot {
             select_console('x11', await_console => 0);
         }
     }
-    elsif (check_var('BACKEND', 'ipmi')) {
-        select_console 'sol', await_console => 0;
-        # boot from harddrive
-        assert_screen([qw(virttest-pxe-menu qa-net-selection prague-pxe-menu pxe-menu)], 200);
-        send_key 'ret';
-    }
     # On Xen PV and svirt we don't see a Grub menu
     elsif (!(check_var('VIRSH_VMM_FAMILY', 'xen') && check_var('VIRSH_VMM_TYPE', 'linux') && check_var('BACKEND', 'svirt'))) {
-        my @tags = ('grub2');
-        push @tags, 'bootloader-shim-import-prompt'   if get_var('UEFI');
-        push @tags, 'boot-live-' . get_var('DESKTOP') if get_var('LIVETEST');             # LIVETEST won't to do installation and no grub2 menu show up
-        push @tags, 'bootloader'                      if get_var('OFW');
-        push @tags, 'encrypted-disk-password-prompt'  if get_var('ENCRYPT');
-        push @tags, 'linux-login'                     if get_var('KEEP_GRUB_TIMEOUT');    # Also wait for linux-login if grub timeout was not disabled
-        if (get_var('ONLINE_MIGRATION')) {
-            push @tags, 'migration-source-system-grub2';
+        $self->wait_grub(bootloader_time => $bootloader_time, in_grub => $in_grub);
+        if (my $boot_params = get_var('EXTRABOOTPARAMS_BOOT_LOCAL')) {
+            # TODO do we already have code to control the boot parameters? I
+            # think so
+            wait_screen_change { send_key 'e' };
+            for (1 .. $linux_boot_entry) { send_key 'down' }
+            wait_screen_change { send_key 'end' };
+            type_string_very_slow "$boot_params ";
+            save_screenshot;
+            send_key 'ctrl-x';
         }
-        # after gh#os-autoinst/os-autoinst#641 68c815a "use bootindex for boot
-        # order on UEFI" the USB install medium is priority and will always be
-        # booted so we have to handle that
-        # because of broken firmware, bootindex doesn't work on aarch64 bsc#1022064
-        push @tags, 'inst-bootmenu' if ((get_var('USBBOOT') and get_var('UEFI')) || (check_var('ARCH', 'aarch64') and get_var('UEFI')) || get_var('OFW'));
-        $self->handle_uefi_boot_disk_workaround
-          if (is_aarch64_uefi_boot_hdd
-            && !$in_grub
-            && (!(isotovideo::get_version() >= 12 && get_var('UEFI_PFLASH_VARS')) || get_var('ONLINE_MIGRATION')));
-        check_screen(\@tags, $bootloader_time);
-        if (match_has_tag("bootloader-shim-import-prompt")) {
-            send_key "down";
-            send_key "ret";
-            assert_screen "grub2", 15;
+        else {
+            # confirm default choice
+            send_key 'ret';
         }
-        elsif (get_var("LIVETEST")) {
-            # prevent if one day booting livesystem is not the first entry of the boot list
-            if (!match_has_tag("boot-live-" . get_var("DESKTOP"))) {
-                send_key_until_needlematch("boot-live-" . get_var("DESKTOP"), 'down', 10, 5);
-            }
-        }
-        elsif (match_has_tag('inst-bootmenu')) {
-            # assuming the cursor is on 'installation' by default and 'boot from
-            # harddisk' is above
-            send_key_until_needlematch 'inst-bootmenu-boot-harddisk', 'up';
-            boot_local_disk;
-
-            my @tags = qw(grub2 tianocore-mainmenu);
-            push @tags, 'encrypted-disk-password-prompt' if (get_var('ENCRYPT'));
-
-            check_screen(\@tags, 15)
-              || die 'neither grub2 nor tianocore-mainmenu needles found';
-            if (match_has_tag('tianocore-mainmenu')) {
-                $self->handle_uefi_boot_disk_workaround();
-                check_screen('encrypted-disk-password-prompt', 10);
-            }
-            if (match_has_tag('encrypted-disk-password-prompt')) {
-                workaround_type_encrypted_passphrase;
-                assert_screen('grub2');
-            }
-        }
-        elsif (match_has_tag('encrypted-disk-password-prompt')) {
-            # unlock encrypted disk before grub
-            workaround_type_encrypted_passphrase;
-            assert_screen "grub2", 15;
-        }
-        # If KEEP_GRUB_TIMEOUT is set, SUT may be at linux-login already, so no need to abort in that case
-        elsif (!match_has_tag("grub2") and !match_has_tag('linux-login')) {
-            # check_screen timeout
-            my $failneedle = get_var('KEEP_GRUB_TIMEOUT') ? 'linux-login' : 'grub2';
-            die "needle '$failneedle' not found";
-        }
-        mutex_wait 'support_server_ready' if get_var('USE_SUPPORT_SERVER');
-        # confirm default choice
-        send_key 'ret';
     }
 
     # On Xen we have to re-connect to serial line as Xen closed it after restart
@@ -472,6 +644,8 @@ sub wait_boot {
 
     if ($textmode || check_var('DESKTOP', 'textmode')) {
         my $textmode_needles = [qw(linux-login emergency-shell emergency-mode)];
+        # 2nd stage of autoyast can be considered as linux-login
+        push @{$textmode_needles}, 'autoyast-init-second-stage' if get_var('AUTOYAST');
         # Soft-fail for user_defined_snapshot in extra_tests_on_gnome and extra_tests_on_gnome_on_ppc
         # if not able to boot from snapshot
         if (get_var('TEST') !~ /extra_tests_on_gnome/) {
@@ -594,10 +768,12 @@ sub select_serial_terminal {
         } else {
             $console = $root ? 'root-virtio-terminal' : 'virtio-terminal';
         }
-    } elsif (get_var('S390_ZKVM')) {
-        $console = $root ? 'root-console' : 'user-console';
     } elsif ($backend eq 'svirt') {
-        $console = $root ? 'root-console' : 'user-console';
+        if (check_var('SERIAL_CONSOLE', 0)) {
+            $console = $root ? 'root-console' : 'user-console';
+        } else {
+            $console = $root ? 'root-sut-serial' : 'sut-serial';
+        }
     } elsif ($backend =~ /^(ikvm|ipmi|spvm)$/) {
         $console = 'root-ssh';
     }
@@ -638,17 +814,38 @@ sub post_fail_hook {
         }
     }
 
+    if (get_var('FULL_LVM_ENCRYPT') && get_var('LVM_THIN_LV')) {
+        my $self = shift;
+        select_console 'root-console';
+        my $lvmdump_regex = qr{/root/lvmdump-.*?-\d+\.tgz};
+        my $out           = script_output 'lvmdump';
+        if ($out =~ /(?<lvmdump_gzip>$lvmdump_regex)/) {
+            upload_logs "$+{lvmdump_gzip}";
+        }
+        $self->save_and_upload_log('lvm dumpconfig', '/tmp/lvm_dumpconf.out');
+    }
+
     if ($self->{in_wait_boot}) {
         record_info('shutdown', 'At least we reached target Shutdown') if (wait_serial 'Reached target Shutdown');
     }
     elsif ($self->{in_boot_desktop}) {
         record_info('Startup', 'At least Startup is finished.') if (wait_serial 'Startup finished');
     }
+    # Find out in post-fail-hook if system is I/O-busy, poo#35877
+    else {
+        select_console 'log-console';
+        my $io_status = script_output("sed -n 's/^.*da / /p' /proc/diskstats | cut -d' ' -f10");
+        record_info('System I/O status:', ($io_status =~ /^0$/) ? 'idle' : 'busy');
+    }
+
     # In case the system is stuck in shutting down or during boot up, press
     # 'esc' just in case the plymouth splash screen is shown and we can not
     # see any interesting console logs.
     send_key 'esc';
     save_screenshot;
+    # the space prevents the esc from eating up the next alphanumerical
+    # character typed into the console
+    send_key 'spc';
 }
 
 1;

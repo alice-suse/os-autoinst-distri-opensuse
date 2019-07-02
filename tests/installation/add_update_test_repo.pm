@@ -11,7 +11,8 @@
 # Maintainer: Stephan Kulow <coolo@suse.de>
 
 use strict;
-use base "y2logsstep";
+use warnings;
+use base 'y2_installbase';
 use testapi;
 use qam 'advance_installer_window';
 

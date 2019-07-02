@@ -11,8 +11,9 @@
 # Summary: Test custom partitioning selection: Split off '/usr' partition
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
-use base "y2logsstep";
+use base 'y2_installbase';
 use strict;
+use warnings;
 use testapi;
 use version_utils qw(is_storage_ng is_tumbleweed);
 use partition_setup 'addpart';

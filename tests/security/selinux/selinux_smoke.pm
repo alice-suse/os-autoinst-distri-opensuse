@@ -23,9 +23,10 @@
 
 use base 'opensusebasetest';
 use strict;
+use warnings;
 use testapi;
 use utils;
-use registration "add_suseconnect_product";
+use registration qw(add_suseconnect_product register_product);
 use version_utils "is_sle";
 
 sub run {
@@ -45,9 +46,15 @@ sub run {
 
     # for sle, register available extensions and modules, e.g., free addons
     if (is_sle) {
-        my $SCC_REGCODE = get_required_var("SCC_REGCODE");
-        assert_script_run("SUSEConnect -r $SCC_REGCODE");
-        add_suseconnect_product("sle-module-web-scripting");
+        register_product();
+        my $version = get_required_var('VERSION') =~ s/([0-9]+).*/$1/r;
+        if ($version == '15') {
+            $version = get_required_var('VERSION') =~ s/([0-9]+)-SP([0-9]+)/$1.$2/r;
+        }
+        my $arch    = get_required_var('ARCH');
+        my $params  = " ";
+        my $timeout = 180;
+        add_suseconnect_product("sle-module-web-scripting", "$version", "$arch", "$params", "$timeout");
     }
 
     # install & remove patterns, e.g., mail_server

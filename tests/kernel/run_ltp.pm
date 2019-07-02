@@ -17,8 +17,10 @@ use base 'opensusebasetest';
 use testapi qw(is_serial_terminal :DEFAULT);
 use utils;
 use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);
-use JSON;
 use serial_terminal;
+use Mojo::File 'path';
+use Mojo::JSON;
+use LTP::WhiteList 'override_known_failures';
 require bmwqemu;
 
 sub start_result {
@@ -238,7 +240,32 @@ sub record_ltp_result {
     }
 
     $self->commit_result($details, $fh);
+    $self->write_extra_test_result($export_details);
     return (0, $export_details);
+}
+
+sub write_extra_test_result {
+    my ($self, $details) = @_;
+    my $dir      = bmwqemu::result_dir();
+    my $filename = $details->{test_fqn} =~ s/:/_/gr;
+    my $result   = 'failed';
+    $result = 'passed'  if ($details->{test}->{result} eq 'PASS');
+    $result = 'skipped' if ($details->{test}->{result} eq 'CONF');
+
+    my $result_file = {
+        dents   => 0,
+        details => [{
+                _source => 'parser',
+                result  => $result,
+                text    => $filename . '.txt',
+                title   => $filename,
+        }],
+        result => $result,
+    };
+    path($dir, 'result-' . $filename . '.json')->spurt(Mojo::JSON::encode_json($result_file));
+    path($dir, $filename . '.txt')->spurt($details->{test}->{log});
+
+    push @{$self->{details}}, $result_file->{details}->[0];
 }
 
 sub thetime {
@@ -281,6 +308,8 @@ sub run {
     }
     my $test_log = wait_serial(qr/$fin_msg\d+/, $timeout, 0, record_output => 1);
     my ($timed_out, $result_export) = $self->record_ltp_result($cmd_file, $test, $test_log, $fin_msg, thetime() - $start_time, $is_posix);
+
+    override_known_failures($self, $test_result_export->{environment}, $cmd_file, $test->{name}) if get_var('LTP_KNOWN_ISSUES') and $self->{result} eq 'fail';
 
     push(@{$test_result_export->{results}}, $result_export);
     if ($timed_out) {

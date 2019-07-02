@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2018 SUSE LLC
+# Copyright © 2012-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -12,7 +12,8 @@
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
 use strict;
-use base 'y2logsstep';
+use warnings;
+use base 'y2_installbase';
 use testapi;
 use lockapi;
 use utils;
@@ -52,11 +53,11 @@ sub run {
 
     # workaround for yast popups and
     # detect "Wrong Digest" error to end test earlier
-    my @tags = qw(rebootnow yast2_wrong_digest yast2_package_retry);
+    my @tags = qw(rebootnow yast2_wrong_digest yast2_package_retry yast_error);
     if (get_var('LIVECD')) {
         push(@tags, 'screenlock');
     }
-    if (get_var("UPGRADE")) {
+    if (get_var('UPGRADE') || get_var('LIVE_UPGRADE')) {
         push(@tags, 'ERROR-removing-package');
         push(@tags, 'DIALOG-packages-notifications');
         # There is a dialog with packages that updates are available from
@@ -66,7 +67,7 @@ sub run {
     # upgrades are slower
     # our Hyper-V server is just too slow
     # SCC might mean we install everything from the slow internet
-    if (get_var('UPGRADE') || check_var('VIRSH_VMM_FAMILY', 'hyperv') || (check_var('SCC_REGISTER', 'installation') && (!get_var('SCC_URL') || is_caasp))) {
+    if (get_var('UPGRADE') || check_var('VIRSH_VMM_FAMILY', 'hyperv') || is_caasp('qam') || (check_var('SCC_REGISTER', 'installation') && !get_var('SCC_URL'))) {
         $timeout = 5500;
     }
     # aarch64 can be particularily slow depending on the hardware
@@ -101,6 +102,10 @@ sub run {
         }
         else {
             assert_screen \@tags, $timeout;
+        }
+
+        if (match_has_tag('yast_error')) {
+            die 'YaST error detected. Test is terminated.';
         }
 
         if (match_has_tag('yast2_wrong_digest')) {
@@ -145,7 +150,7 @@ sub run {
     }
 
     # Stop reboot countdown for e.g. uploading logs
-    unless (get_var("REMOTE_CONTROLLER") || is_caasp || is_hyperv_in_gui) {
+    unless (get_var("REMOTE_CONTROLLER") || is_caasp) {
         # Depending on the used backend the initial key press to stop the
         # countdown might not be evaluated correctly or in time. In these
         # cases we keep hitting the keys until the countdown stops.

@@ -10,6 +10,8 @@
 # Summary: Boot systems from PXE
 # Maintainer: alice <xlai@suse.com>
 
+package boot_from_pxe;
+
 use base 'opensusebasetest';
 
 use strict;
@@ -68,6 +70,7 @@ sub run {
         }
         elsif (match_has_tag("orthos-grub-boot")) {
             #Orthos
+            wait_still_screen 5;
             my $path_prefix = "auto/openqa/repo";
             my $path        = "${path_prefix}/${image_name}/boot/${arch}";
             $image_path = "linux $path/linux install=$repo";
@@ -87,6 +90,7 @@ sub run {
             my $device = check_var('BACKEND', 'ipmi') ? "?device=$interface" : '';
             my $release = get_var('BETA') ? 'LATEST' : 'GM';
             $image_name = get_var('ISO') =~ s/.*\/(.*)-DVD-${arch}-.*\.iso/$1-$release/r;
+            $image_name = get_var('PXE_PRODUCT_NAME') if get_var('PXE_PRODUCT_NAME');
             $image_path = "/mounts/dist/install/SLP/${image_name}/${arch}/DVD1/boot/${arch}/loader/linux ";
             $image_path .= "initrd=/mounts/dist/install/SLP/${image_name}/${arch}/DVD1/boot/${arch}/loader/initrd ";
             $image_path .= "install=http://mirror.suse.cz/install/SLP/${image_name}/${arch}/DVD1$device ";
@@ -98,6 +102,7 @@ sub run {
         send_key "tab";
     }
     if (check_var('BACKEND', 'ipmi')) {
+        $image_path .= "ipv6.disable=1 " if get_var('LINUX_BOOT_IPV6_DISABLE');
         $image_path .= "ifcfg=$interface=dhcp4 " unless get_var('NETWORK_INIT_PARAM');
         $image_path .= 'plymouth.enable=0 ';
     }
@@ -126,6 +131,12 @@ sub run {
 
     specific_bootmenu_params;
 
+    # try to avoid blue screen issue on osd ipmi tests
+    # local test passes, if validated on osd, will switch on to all ipmi tests
+    if (check_var('BACKEND', 'ipmi') && check_var('VIDEOMODE', 'text') && check_var('VIRT_AUTOTEST', 1)) {
+        type_string_slow(" vt.color=0x07 ");
+    }
+
     send_key 'ret';
     save_screenshot;
 
@@ -134,10 +145,13 @@ sub run {
         my $ssh_vnc_tag       = eval { check_var('VIDEOMODE', 'text') ? 'sshd' : 'vnc' } . '-server-started';
         my @tags              = ($ssh_vnc_tag, 'orthos-grub-boot-linux');
         assert_screen \@tags, $ssh_vnc_wait_time;
+        save_screenshot;
+        sleep 2;
 
         if (match_has_tag("orthos-grub-boot-linux")) {
             my $image_name = eval { check_var("INSTALL_TO_OTHERS", 1) ? get_var("REPO_0_TO_INSTALL") : get_var("REPO_0") };
             my $args       = "initrd auto/openqa/repo/${image_name}/boot/${arch}/initrd";
+            wait_still_screen 5;
             type_string $args;
             send_key 'ret';
             assert_screen 'orthos-grub-boot-initrd', $ssh_vnc_wait_time;
@@ -157,5 +171,20 @@ sub run {
         wait_still_screen;
     }
 }
+
+sub post_fail_hook {
+    my $self = shift;
+
+    if (check_var('BACKEND', 'ipmi') && check_var('VIDEOMODE', 'text')) {
+        select_console 'log-console';
+        save_screenshot;
+        script_run "save_y2logs /tmp/y2logs_clone.tar.bz2";
+        upload_logs "/tmp/y2logs_clone.tar.bz2";
+        save_screenshot;
+    }
+
+    $self->SUPER::post_fail_hook();
+}
+
 
 1;

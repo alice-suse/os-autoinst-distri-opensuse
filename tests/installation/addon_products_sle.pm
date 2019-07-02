@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2018 SUSE LLC
+# Copyright © 2012-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -12,9 +12,10 @@
 # Maintainer: Stephan Kulow <coolo@suse.de>
 
 use strict;
-use base "y2logsstep";
+use warnings;
+use base 'y2_installbase';
 use testapi;
-use utils qw(addon_license handle_untrusted_gpg_key);
+use utils qw(addon_license handle_untrusted_gpg_key assert_screen_with_soft_timeout);
 use version_utils 'is_sle';
 use qam 'advance_installer_window';
 use registration qw(%SLE15_DEFAULT_MODULES rename_scc_addons @SLE15_ADDONS_WITHOUT_LICENSE);
@@ -41,14 +42,17 @@ sub handle_all_packages_medium {
     # Refer to https://bugzilla.suse.com/show_bug.cgi?id=1078958#c4
     push @addons, 'we' if check_var('SLE_PRODUCT', 'sled') && !grep(/^we$/, @addons);
 
+    # Add python2 module, refer to https://jira.suse.de/browse/SLE-3167
+    push @addons, 'python2' if get_var('MEDIA_UPGRADE') && is_sle('<=15', get_var('HDDVERSION')) && !check_var('SLE_PRODUCT', 'rt');
+
     # For SLES12SPx and SLES11SPx to SLES15 migration, need add the demand module at least for media migration manually
     # Refer to https://fate.suse.com/325293
     if (get_var('MEDIA_UPGRADE') && is_sle('<15', get_var('HDDVERSION')) && !check_var('SLE_PRODUCT', 'sled')) {
         my @demand_addon = qw(desktop serverapp script);
         push @demand_addon, 'sdk'    if !check_var('SLE_PRODUCT', 'sles4sap');
         push @demand_addon, 'legacy' if !check_var('SLE_PRODUCT', 'rt');
-        for my $a (@demand_addon) {
-            push @addons, $a if !grep(/^$a$/, @addons);
+        for my $i (@demand_addon) {
+            push @addons, $i if !grep(/^$i$/, @addons);
         }
     }
     # In upgrade testing, the sle addons, including extensions and modules,
@@ -61,8 +65,8 @@ sub handle_all_packages_medium {
     # Read addons from SCC_ADDONS and add them to list
     # Make sure every addon only appears once in the list,
     # there will be problem to enable the same addon twice
-    for my $a (split(/,/, get_var('SCC_ADDONS', ''))) {
-        push @addons, $a if !grep(/^$a$/, @addons);
+    for my $i (split(/,/, get_var('SCC_ADDONS', ''))) {
+        push @addons, $i if !grep(/^$i$/, @addons);
     }
 
     # Record the addons to be enabled for debugging
@@ -71,10 +75,10 @@ sub handle_all_packages_medium {
     # Also record the addons which require license agreement
     my @addons_with_license = qw(ha we);
     my @addons_license_tags = ();
-    for my $a (@addons) {
-        push @addons_license_tags, "addon-license-$a" if grep(/^$a$/, @addons_with_license);
+    for my $i (@addons) {
+        push @addons_license_tags, "addon-license-$i" if grep(/^$i$/, @addons_with_license);
         send_key 'home';
-        send_key_until_needlematch "addon-products-all_packages-$a-highlighted", 'down';
+        send_key_until_needlematch "addon-products-all_packages-$i-highlighted", 'down', 30;
         send_key 'spc';
     }
     send_key $cmd{next};
@@ -84,7 +88,7 @@ sub handle_all_packages_medium {
     my $counter           = 2 + (scalar @addons_license_tags);
     my $addon_license_num = 0;
     while ($counter--) {
-        assert_screen([qw(addon-products-nonempty sle-product-license-agreement)], 60);
+        assert_screen([qw(addon-products-nonempty sle-product-license-agreement)], 180);
         last if (match_has_tag 'addon-products-nonempty');
         if (match_has_tag 'sle-product-license-agreement') {
             if (@addons_license_tags && check_screen(\@addons_license_tags, 30)) {
@@ -121,7 +125,7 @@ sub handle_addon {
     }
     send_key 'pgup';
     wait_still_screen 2;
-    send_key_until_needlematch "addon-products-$addon", 'down';
+    send_key_until_needlematch "addon-products-$addon", 'down', 30;
     # modules like SES or RT that are not part of Packages ISO don't have this step
     if (is_sle('15+') && $addon !~ /^ses$|^rt$/) {
         send_key 'spc';
@@ -148,13 +152,13 @@ sub test_addonurl {
 
 sub run {
     my ($self) = @_;
-
     if (get_var('SKIP_INSTALLER_SCREEN', 0)) {
         advance_installer_window('inst-addon');
         set_var('SKIP_INSTALLER_SCREEN', 0);
     }
-    $self->process_unsigned_files([qw(inst-addon addon-products)]);
-    assert_screen [qw(inst-addon addon-products)];
+    if ($self->process_unsigned_files([qw(inst-addon addon-products)])) { ;
+        assert_screen_with_soft_timeout([qw(inst-addon addon-products)], timeout => 60, soft_timeout => 30, bugref => 'bsc#1123963');
+    }
     if (get_var("ADDONS")) {
         send_key match_has_tag('inst-addon') ? 'alt-k' : 'alt-a';
         # the ISO_X variables must match the ADDONS list

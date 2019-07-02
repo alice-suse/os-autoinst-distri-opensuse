@@ -17,6 +17,7 @@
 # Maintainer: Vladimir Nadvornik <nadvornik@suse.cz>
 
 use strict;
+use warnings;
 use base 'basetest';
 use testapi;
 use lockapi;
@@ -80,7 +81,7 @@ sub run {
         for my $network (split /\s*,\s*/, $networks) {
             if ($net_conf->{$network}->{dhcp}) {
                 for my $ip (@{$dhcp_leases{lc($node)}}) {
-                    if (check_ip_in_subnet($net_conf->{$network}, $ip)) {
+                    if (check_ip_in_subnet($net_conf->{$network}, $ip)) {    ## no critic (ProhibitDeepNests)
                         push @external_ip, $ip;
                         push @internal_ip, $ip;
                         last;

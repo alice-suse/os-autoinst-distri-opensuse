@@ -10,8 +10,9 @@
 # Summary: Handle "Choose Operation System Edition" screen for SLES4SAP installation flow
 # Maintainer: Alvaro Carvajal <acarvajal@suse.de>
 
+use base 'y2_installbase';
 use strict;
-use base "y2logsstep";
+use warnings;
 use testapi;
 use version_utils 'is_sle';
 

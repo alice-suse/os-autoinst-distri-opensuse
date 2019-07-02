@@ -13,13 +13,17 @@
 package wickedbase;
 
 use base 'opensusebasetest';
-use utils 'systemctl';
+use utils qw(systemctl file_content_replace zypper_call);
 use network_utils;
 use lockapi;
 use testapi qw(is_serial_terminal :DEFAULT);
 use serial_terminal;
 use Carp;
+use Mojo::File 'path';
 use strict;
+use warnings;
+
+use constant WICKED_DATA_DIR => '/tmp/wicked/data';
 
 =head2 wicked_command
 
@@ -61,12 +65,28 @@ sub assert_wicked_state {
     my ($self, %args) = @_;
     systemctl('is-active wicked.service',  expect_false => $args{wicked_client_down});
     systemctl('is-active wickedd.service', expect_false => $args{wicked_daemon_down});
-    my $status = $args{interfaces_down} ? 'down' : 'up';
-    assert_script_run("/data/check_interfaces.sh $status");
+    assert_script_run(sprintf("grep -q \"%s\" /sys/class/net/%s/operstate", $args{interfaces_down} ? 'down' : 'up', $args{iface}));
     assert_script_run("ping -c 4 $args{ping_ip}") if $args{ping_ip};
-    # this just FYI so we don't want to fail
-    script_run('ip addr show ' . $args{iface}) if $args{iface};
 }
+
+
+sub reset_wicked {
+    my $self = @_;
+    # Remove any config file and leave the system clean to start tests
+    script_run('find /etc/sysconfig/network/ -name "ifcfg-*" | grep -v "ifcfg-lo" | xargs rm');
+    script_run('rm -f route');
+
+    # Remove any previous manual ip configuration
+    my $iface = iface();
+    script_run("ip a flush dev $iface");
+    script_run('ip r flush all');
+    script_run("ip link set dev $iface down");
+
+    # Restart services
+    script_run('rcwickedd restart');
+    script_run('rcwicked restart');
+}
+
 
 =head2 get_remote_ip
 
@@ -97,38 +117,31 @@ set the job variable C<IS_WICKED_REF> will be used. See also C<get_remote_ip()>.
 
 sub get_ip {
     my ($self, %args) = @_;
-    my $ip;
+    die '$args{type} is required' unless $args{type};
 
     $args{is_wicked_ref} //= check_var('IS_WICKED_REF', '1');
     $args{netmask}       //= 0;
 
-    if ($args{type} eq 'host') {
-        $ip = $args{is_wicked_ref} ? '10.0.2.10/15' : '10.0.2.11/15';
-    }
-    elsif ($args{type} eq 'gre1') {
-        $ip = $args{is_wicked_ref} ? '192.168.1.1' : '192.168.1.2';
-    }
-    elsif ($args{type} eq 'sit1') {
-        $ip = $args{is_wicked_ref} ? '2001:0db8:1234::000e' : '2001:0db8:1234::000f';
-    }
-    elsif ($args{type} eq 'tunl1') {
-        $ip = $args{is_wicked_ref} ? '3.3.3.10' : '3.3.3.11';
-    }
-    elsif ($args{type} eq 'tun1' || $args{type} eq 'tap1') {
-        $ip = $args{is_wicked_ref} ? '192.168.2.10' : '192.168.2.11';
-    }
-    elsif ($args{type} eq 'br0') {
-        $ip = $args{is_wicked_ref} ? '10.0.2.10' : '10.0.2.11';
-    }
-    elsif ($args{type} eq 'vlan') {
-        $ip = $args{is_wicked_ref} ? '192.0.2.10/24' : '192.0.2.11/24';
-    }
-    elsif ($args{type} eq 'vlan_changed') {
-        $ip = $args{is_wicked_ref} ? '192.0.2.110/24' : '192.0.2.111/24';
-    }
-    else {
-        croak('Unknown ip type ' . ($args{type} || 'undef'));
-    }
+    my $ips_hash =
+      {
+        #                       SUT                       REF
+        host         => ['10.0.2.11/15',             '10.0.2.10/15'],
+        host6        => ['fd00:deca:fbad:50::11/64', 'fd00:deca:fbad:50::10/64'],
+        gre1         => ['192.168.1.2',              '192.168.1.1'],
+        sit1         => ['2001:0db8:1234::000f',     '2001:0db8:1234::000e'],
+        tunl1        => ['3.3.3.11',                 '3.3.3.10'],
+        tun1         => ['192.168.2.11',             '192.168.2.10'],
+        tap1         => ['192.168.2.11',             '192.168.2.10'],
+        br0          => ['10.0.2.11',                '10.0.2.10'],
+        vlan         => ['192.0.2.11/24',            '192.0.2.10/24'],
+        vlan_changed => ['192.0.2.111/24',           '192.0.2.110/24'],
+        macvtap      => ['10.0.2.18/15',             '10.0.2.17/15'],
+        bond         => ['10.0.2.18',                '10.0.2.17'],
+        dhcp_2nic    => ['10.0.3.15',                '10.0.3.16'],
+        second_card  => ['10.0.3.11',                '10.0.3.12'],
+      };
+    my $ip = $ips_hash->{$args{type}}->[$args{is_wicked_ref}];
+    die "$args{type} not exists" unless $ip;
 
     if (!$args{netmask}) {
         $ip =~ s'/\d+$'';
@@ -157,6 +170,26 @@ sub get_current_ip {
     return;
 }
 
+=head2 download_data_dir
+
+Download all files from data/wicked into WICKED_DATA_DIR.
+This method is used by before_test.pm.
+=cut
+sub download_data_dir {
+    assert_script_run("mkdir -p '" . WICKED_DATA_DIR . "'");
+    assert_script_run("(cd '" . WICKED_DATA_DIR . "'; curl -L -v " . autoinst_url . "/data/wicked > wicked.data && cpio -id < wicked.data && mv data wicked && rm wicked.data)");
+    if (script_run('test -d ' . WICKED_DATA_DIR . '/static_address') != 0) {
+        record_info('WORKAROUND', "poo#52022 - os-autoinst doesn't support recursive download");
+        my $base = $bmwqemu::vars{CASEDIR} . "/data/wicked";
+        for my $file (path($base)->list_tree({dir => 1})->each) {
+            next unless (-d $file);
+            next if ($file eq $base);
+            my $fn = substr($file, length($base) + 1);
+            assert_script_run("(cd '" . WICKED_DATA_DIR . "'; curl -L -v " . autoinst_url . "/data/wicked/$fn > wicked.data && cpio -id < wicked.data && mkdir -p wicked/$fn && mv data/* wicked/$fn/ && rmdir data && rm wicked.data)");
+        }
+    }
+}
+
 =head2 get_from_data
 
   get_from_data($source, $target [, executable => 0, add_suffix => 0])
@@ -169,34 +202,61 @@ If the parameter C<executable> is set to 1, it will grant execution permissions 
 =cut
 sub get_from_data {
     my ($self, $source, $target, %args) = @_;
+
     $source .= check_var('IS_WICKED_REF', '1') ? 'ref' : 'sut' if $args{add_suffix};
-    assert_script_run("wget --quiet " . data_url($source) . " -O $target");
-    assert_script_run("chmod +x $target") if $args{executable};
+    # we know we fail on other directories than data/wicked
+    assert_script_run("cp '" . WICKED_DATA_DIR . '/' . $source . "' '$target'");
+    assert_script_run("chmod +x '$target'") if $args{executable};
 }
 
 =head2 ping_with_timeout
 
-  ping_with_timeout(timeout => $timeout, ip => $ip [, ip_version => 'v4'], type => $type)
+  ping_with_timeout(type => $type[, ip => $ip, timeout => 60, ip_version => 'v4', proceed_on_failure => 0])
 
 Pings a given IP with a given C<timeout>.
 C<ip_version> defines the ping command to be used, 'ping' by default and 'ping6' for 'v6'.
-IP could be specified directly via C<ip> or using C<type> variable. In case of C<type> variable 
-it will be bypassed to C<get_remote_ip> function to get IP by label
+IP could be specified directly via C<ip> or using C<type> variable. In case of C<type> variable
+it will be bypassed to C<get_remote_ip> function to get IP by label.
+If ping fails, command die unless you specify C<proceed_on_failure>.
 =cut
 sub ping_with_timeout {
     my ($self, %args) = @_;
-    $args{ip_version} //= 'v4';
-    $args{timeout}    //= '60';
+    $args{ip_version}         //= 'v4';
+    $args{timeout}            //= '60';
+    $args{proceed_on_failure} //= 0;
+    $args{count_success}      //= 1;
     $args{ip} = $self->get_remote_ip(%args) if $args{type};
+    $args{threshold} //= 50;
     my $timeout      = $args{timeout};
     my $ping_command = ($args{ip_version} eq "v6") ? "ping6" : "ping";
+    $ping_command .= " -c 1 $args{ip}";
+    $ping_command .= " -I $args{interface}" if $args{interface};
     while ($timeout > 0) {
-        return 1 if script_run("$ping_command -c 1 $args{ip}") == 0;
+        if (script_run($ping_command) == 0) {
+            if ($args{count_success} > 1) {
+                my $cnt = $args{count_success} - 1;
+                $ping_command =~ s/\s-c\s1\s+/ -c $cnt /;
+                my $ping_out = script_output($ping_command, proceed_on_failure => 1);
+                $ping_out =~ /, (\d{1,3})% packet loss/;
+                #we treat interface in workable state if it manage to echo more than half packets
+                if ($1 > $args{threshold}) {
+                    die('PING EXCEED THRESHOLD ' . $args{threshold} . '%\n' . $ping_out);
+                }
+                elsif ($1) {
+                    record_info('WARNING', sprintf('PING with %d%% packet loss. Threshold is %d%% \n %s', $1, $args{threshold}, $ping_out));
+                }
+            }
+            return 1;
+        }
         $timeout -= 1;
         sleep 5;
     }
+    if (!$args{proceed_on_failure}) {
+        die('PING failed: ' . $ping_command);
+    }
     return 0;
 }
+
 
 =head2 setup_tuntap
 
@@ -209,14 +269,12 @@ The interface will be brought up using a wicked command.
 
 =cut
 sub setup_tuntap {
-    my ($self, $config, $type) = @_;
+    my ($self, $config, $type, $iface) = @_;
     my $local_ip = $self->get_ip(type => $type);
     my $remote_ip = $self->get_remote_ip(type => $type);
-    assert_script_run("sed \'s/local_ip/$local_ip/\' -i $config");
-    assert_script_run("sed \'s/remote_ip/$remote_ip/\' -i $config");
-    assert_script_run("cat $config");
-    $self->wicked_command('ifup', $type);
-    assert_script_run('ip a');
+    my $host_ip = $self->get_ip(type => 'host');
+    file_content_replace($config, local_ip => $local_ip, remote_ip => $remote_ip, host_ip => $host_ip, iface => $iface);
+    $self->wicked_command('ifup', 'all');
 }
 
 =head2 setup_tunnel
@@ -229,16 +287,12 @@ The interface will be brought up using a wicked command.
 
 =cut
 sub setup_tunnel {
-    my ($self, $config, $type) = @_;
+    my ($self, $config, $type, $iface) = @_;
     my $local_ip = $self->get_ip(type => 'host');
     my $remote_ip = $self->get_remote_ip(type => 'host');
     my $tunnel_ip = $self->get_ip(type => $type);
-    assert_script_run("sed \'s/local_ip/$local_ip/\' -i $config");
-    assert_script_run("sed \'s/remote_ip/$remote_ip/\' -i $config");
-    assert_script_run("sed \'s/tunnel_ip/$tunnel_ip/\' -i $config");
-    assert_script_run("cat $config");
-    $self->wicked_command('ifup', $type);
-    assert_script_run('ip a');
+    file_content_replace($config, local_ip => $local_ip, remote_ip => $remote_ip, tunnel_ip => $tunnel_ip, iface => $iface);
+    $self->wicked_command('ifup', 'all');
 }
 
 =head2 create_tunnel_with_commands
@@ -275,15 +329,12 @@ sub setup_bridge {
     my ($self, $config, $dummy, $command) = @_;
     my $local_ip = $self->get_ip(type => 'host');
     my $iface    = iface();
-    assert_script_run("sed \'s/ip_address/$local_ip/\' -i $config");
-    assert_script_run("sed \'s/iface/$iface/\' -i $config");
-    assert_script_run("cat $config");
-    $self->wicked_command($command, 'br0');
+    file_content_replace($config, ip_address => $local_ip, iface => $iface);
+    $self->wicked_command($command, 'all');
     if ($dummy ne '') {
         assert_script_run("cat $dummy");
         $self->wicked_command($command, 'dummy0');
     }
-    assert_script_run('ip a');
 }
 
 =head2 setup_openvpn_client
@@ -298,8 +349,7 @@ sub setup_openvpn_client {
     my $openvpn_client = '/etc/openvpn/client.conf';
     my $remote_ip      = $self->get_remote_ip(type => 'host');
     $self->get_from_data('wicked/openvpn/client.conf', $openvpn_client);
-    assert_script_run("sed \'s/remote_ip/$remote_ip/\' -i $openvpn_client");
-    assert_script_run("sed \'s/device/$device/\' -i $openvpn_client");
+    file_content_replace($openvpn_client, remote_ip => $remote_ip, device => $device);
 }
 
 =head2 get_test_result
@@ -346,7 +396,7 @@ sub upload_wicked_logs {
     script_run("wicked show-xml > $logs_dir/wicked_xml.log 2>&1");
     script_run("ip addr show > $logs_dir/ip_addr.log 2>&1");
     script_run("ip route show table all > $logs_dir/ip_route.log 2>&1");
-    script_run("cp /tmp/wicked_serial.log $logs_dir/");
+    script_run("cp /tmp/wicked_serial.log $logs_dir/") if $prefix eq 'post';
     script_run("tar -C /tmp/ -cvzf $dir_name.tar.gz $dir_name");
     eval {
         upload_logs("$dir_name.tar.gz", failok => 0, log_name => " ");
@@ -354,8 +404,10 @@ sub upload_wicked_logs {
     } or do {
         my $e = $@;
         record_info('Info', 'Need to re-configure the network to upload logs as the test removed all the setup');
+        reset_wicked();
         recover_network();
         upload_logs("$dir_name.tar.gz", failok => 1, log_name => " ");
+        reset_wicked();
     };
 }
 
@@ -380,7 +432,7 @@ Creating VLAN using only ip commands. Getting ip alias name for wickedbase::get_
 function
 
 =cut
-sub setup_vlan() {
+sub setup_vlan {
     my ($self, $ip_type) = @_;
     my $iface    = iface();
     my $local_ip = $self->get_ip(type => $ip_type, netmask => 1);
@@ -389,6 +441,131 @@ sub setup_vlan() {
     assert_script_run("ip -d link show $iface.42");
     assert_script_run("ip addr add $local_ip dev $iface.42");
     assert_script_run("ip link set dev $iface.42 up");
+}
+
+sub prepare_check_macvtap {
+    my ($self, $config, $iface, $ip_address) = @_;
+    $self->get_from_data('wicked/check_macvtap.c', 'check_macvtap.c', executable => 1);
+    assert_script_run('gcc ./check_macvtap.c -o check_macvtap');
+    script_run('chmod +x ./check_macvtap');
+    file_content_replace($config, iface => $iface, ip_address => $ip_address);
+}
+
+sub validate_macvtap {
+    my ($self, $macvtap_log) = @_;
+    my $ref_ip     = $self->get_ip(type => 'host',    netmask => 0, is_wicked_ref => 1);
+    my $ip_address = $self->get_ip(type => 'macvtap', netmask => 0);
+    my $cmd_text   = "./check_macvtap $ref_ip $ip_address > $macvtap_log 2>&1 &";
+    type_string($cmd_text);
+    wait_serial($cmd_text, undef, 0, no_regex => 1);
+    type_string("\n");
+
+    # arping not getting packet back it is expected because check_macvtap
+    # executable is consume it from tap device before it actually reaches arping
+    script_run("arping -c 1 -I macvtap1 $ref_ip");
+    validate_script_output("cat $macvtap_log", sub { m/Success listening to tap device/ });
+}
+
+sub setup_bond {
+    my ($self, $mode, $iface0, $iface1) = @_;
+
+    my $cfg_bond0 = '/etc/sysconfig/network/ifcfg-bond0';
+    my $cfg_ifc0  = '/etc/sysconfig/network/ifcfg-' . $iface0;
+    my $cfg_ifc1  = '/etc/sysconfig/network/ifcfg-' . $iface1;
+    $self->get_from_data('wicked/ifcfg/ifcfg-eth0-hotplug',     $cfg_ifc0);
+    $self->get_from_data('wicked/ifcfg/ifcfg-eth0-hotplug',     $cfg_ifc1);
+    $self->get_from_data('wicked/bonding/ifcfg-bond0-' . $mode, $cfg_bond0);
+
+    my $ipaddr4   = $self->get_ip(type => 'host',        netmask       => 1);
+    my $ipaddr6   = $self->get_ip(type => 'host6',       netmask       => 1);
+    my $ping_ip_1 = $self->get_ip(type => 'host',        is_wicked_ref => 1);
+    my $ping_ip_2 = $self->get_ip(type => 'second_card', is_wicked_ref => 1);
+
+    file_content_replace($cfg_bond0, ipaddr4 => $ipaddr4, ipaddr6 => $ipaddr6, iface0 => $iface0, iface1 => $iface1, ping_ip_1 => $ping_ip_1, ping_ip_2 => $ping_ip_2, '--sed-modifier' => 'g');
+
+    $self->wicked_command('ifup', 'all');
+}
+
+sub setup_team {
+    my ($self, $mode, $iface0, $iface1) = @_;
+
+    my $cfg_team0 = '/etc/sysconfig/network/ifcfg-team0';
+    my $cfg_ifc0  = '/etc/sysconfig/network/ifcfg-' . $iface0;
+    my $cfg_ifc1  = '/etc/sysconfig/network/ifcfg-' . $iface1;
+
+    my $data_ifcfg = 'wicked/ifcfg/ifcfg-eth0-hotplug';
+    $data_ifcfg .= '-static' if ($mode eq 'ab-nsna_ping');
+
+    $self->get_from_data($data_ifcfg,                           $cfg_ifc0);
+    $self->get_from_data($data_ifcfg,                           $cfg_ifc1);
+    $self->get_from_data('wicked/teaming/ifcfg-team0-' . $mode, $cfg_team0);
+
+    my $ipaddr4  = $self->get_ip(type => 'host',  netmask       => 1);
+    my $ipaddr6  = $self->get_ip(type => 'host6', netmask       => 1);
+    my $ping_ip4 = $self->get_ip(type => 'host',  is_wicked_ref => 1);
+    my $ping_ip6 = $self->get_ip(type => 'host6', is_wicked_ref => 1);
+    file_content_replace($cfg_team0, ipaddr4 => $ipaddr4, ipaddr6 => $ipaddr6, iface0 => $iface0, iface1 => $iface1, ping_ip4 => $ping_ip4, ping_ip6 => $ping_ip6);
+
+    $self->wicked_command('ifup', 'all');
+}
+
+sub get_active_link {
+    my ($self, $link) = @_;
+    if ($link =~ /bond/) {
+        return $1 if (script_output("cat /proc/net/bonding/$link") =~ m/Active Slave: (\w+)/);
+    }
+    elsif ($link =~ /team/) {
+        return $1 if (script_output("teamdctl $link state view") =~ m/active port: (\w+)/);
+    }
+    return;
+}
+
+sub validate_interfaces {
+    my ($self, $interface, $iface0, $iface1, $ping) = @_;
+    $ping //= 1;
+    if (!ifc_is_up($interface)) {
+        record_info('ip addr', script_output('ip addr'));
+        die("Interface $interface does not exist or is not UP");
+    }
+    validate_script_output('ip a s dev ' . $iface0, sub { /master $interface/ });
+    validate_script_output('ip a s dev ' . $iface1, sub { /master $interface/ });
+    $self->ping_with_timeout(type => 'host', interface => $interface, count_success => 30, timeout => 4) if ($ping);
+}
+
+sub check_fail_over {
+    my ($self, $interface, $timeout) = @_;
+    $timeout //= get_var('FAILOVER_TIMEOUT', 60);
+    my $active_link = undef;
+    $active_link = $self->get_active_link($interface);
+    $self->ifbind('unbind', $active_link);
+
+    while ($timeout >= 0) {
+        return 1 if ($self->get_active_link($interface) ne $active_link);
+        $timeout -= 1;
+        sleep 1;
+    }
+    die('Active Link is the same after interface cut');
+}
+
+sub wait_for_dhcpd {
+    my ($self) = @_;
+    my $timeout = 60;
+    while ($timeout > 0) {
+        if (!systemctl('is-active dhcpd.service', ignore_failure => 1)) {
+            record_info('DHCP', 'dhcp active');
+            return 1;
+        }
+        $timeout -= 1;
+        sleep 1;
+    }
+    systemctl('status dhcpd.service');
+    die('DHCP not comming up');
+}
+
+sub ifbind {
+    my ($self, $action, $interface) = @_;
+    my $cmd = 'bash ' . WICKED_DATA_DIR . "/wicked/ifbind.sh $action $interface";
+    record_info('ifbind', $cmd . "\n" . script_output($cmd));
 }
 
 sub post_run {

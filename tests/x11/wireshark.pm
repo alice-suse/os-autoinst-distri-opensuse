@@ -155,8 +155,19 @@ sub run {
     send_key "ctrl-/" if $wireshark_gui_version eq "qt";
     assert_screen "wireshark-filter-selected";
     type_string "dns.a and dns.qry.name == \"www.suse.com\"\n";
-    assert_screen "wireshark-filter-applied";
-    assert_screen "wireshark-dns-response-list";
+    # Sometimes checksum error window popup, then we need close this windows since this caused by offload feature
+    assert_screen([qw(wireshark-filter-applied wireshark-checksum-error)]);
+    if (match_has_tag('wireshark-checksum-error')) {
+        # Close checksum-error window, when we hit this error, the show submenu was extended
+        # we need escape the submenu then send alt-c to close the checksum error page.
+        send_key "esc";
+        wait_still_screen 3;
+        send_key "esc";
+        wait_screen_change { send_key 'alt-c' };
+    }
+    else {
+        assert_screen "wireshark-dns-response-list";
+    }
 
     # close capture
     assert_and_click "wireshark-close-capture";

@@ -1,6 +1,15 @@
+variable "cred_file" {
+    default = "/root/google_credentials.json"
+}
+
 provider "google" {
-    credentials = "/root/google_credentials.json"
+    credentials = "${var.cred_file}"
     project     = "${var.project}"
+}
+
+data "external" "gce_cred" {
+    program = [ "cat", "${var.cred_file}" ]
+    query =  { }
 }
 
 variable "count" {
@@ -49,6 +58,9 @@ resource "google_compute_instance" "openqa" {
 
     metadata {
         sshKeys = "susetest:${file("/root/.ssh/id_rsa.pub")}"
+        openqa_created_by = "${var.name}"
+        openqa_created_date = "${timestamp()}"
+        openqa_created_id = "${element(random_id.service.*.hex, count.index)}"
     }
 
     network_interface {
@@ -56,6 +68,12 @@ resource "google_compute_instance" "openqa" {
             access_config {
         }
     }
+
+    service_account {
+        email = "${data.external.gce_cred.result["client_email"]}"
+        scopes = ["cloud-platform"]
+    }
+
 }
 
 output "public_ip" {

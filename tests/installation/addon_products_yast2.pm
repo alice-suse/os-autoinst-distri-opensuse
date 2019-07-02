@@ -11,8 +11,9 @@
 # Summary: add addon to SLES via DVD or URL
 # Maintainer: Jozef Pupava <jpupava@suse.com>
 
-use base qw(y2logsstep y2x11test);
+use base qw(y2_installbase y2_module_guitest);
 use strict;
+use warnings;
 use testapi;
 use power_action_utils 'reboot_x11';
 use registration qw(fill_in_registration_data skip_registration);

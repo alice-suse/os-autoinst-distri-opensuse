@@ -12,9 +12,10 @@ package change_desktop;
 # Summary: [OOP]Change desktop
 # Maintainer: Jozef Pupava <jpupava@suse.com>
 
-use base "y2logsstep";
-use base "installsummarystep";
+use y2_logs_helper qw(workaround_dependency_issues workaround_dependency_issues break_dependency);
+use base qw(y2_installbase installsummarystep);
 use strict;
+use warnings;
 use testapi;
 
 sub change_desktop {

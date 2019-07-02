@@ -1,4 +1,4 @@
-# Copyright (C) 2018 SUSE LLC
+# Copyright (C) 2018-2019 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,10 +19,13 @@
 
 use base "x11test";
 use strict;
+use warnings;
 use testapi;
-use utils;
+use x11utils 'handle_relogin';
 
 sub run {
+    select_console 'x11';
+
     # Run the gnome-control-center - the sharing section
     x11_start_program "gnome-control-center sharing", target_match => 'vino_screensharing_available-gnome-control-center-sharing';
 
@@ -52,9 +55,18 @@ sub run {
         }
     }
 
-    # Finally ensure that the screen sharing is available
-    assert_screen "with_screensharing";
-    record_info 'vino present', 'Vino and the screen sharing are present';
+    # Ensure that screen sharing is available, on X11 only (wayland is not supported) - boo#1137569
+    x11_start_program('xterm');
+    assert_script_run("loginctl");
+    my $is_wayland = (script_run('loginctl show-session $(loginctl | grep $(whoami) | awk \'{print $1 }\') -p Type | grep wayland') == 0);
+    send_key 'alt-f4';
+    if ($is_wayland) {
+        assert_screen 'without_screensharing';
+        record_soft_failure 'boo#1137569 - screen sharing not yet supported on wayland';
+    } else {
+        assert_screen 'with_screensharing';
+        record_info 'vino present', 'Vino and the screen sharing are present';
+    }
     send_key 'ctrl-q';
 }
 

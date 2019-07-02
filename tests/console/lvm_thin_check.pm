@@ -16,7 +16,7 @@ use warnings;
 use base "opensusebasetest";
 use testapi;
 use utils;
-use y2logsstep;
+use y2_module_basetest 'workaround_suppress_lvm_warnings';
 
 sub run {
     my $self     = shift;
@@ -30,6 +30,7 @@ sub run {
 
     $self->select_serial_terminal;
     record_info('INFO', 'Print lvm setup');
+    workaround_suppress_lvm_warnings;
     assert_script_run 'lsblk';
     assert_script_run 'lvmdiskscan';
     assert_script_run 'lvscan';
@@ -55,18 +56,6 @@ sub run {
     if ((script_run 'diff original_usage instant_usage') != 1) {
         die "LVM usage stats do not differ!";
     }
-}
-
-sub post_fail_hook {
-    my $self = shift;
-    select_console 'root-console';
-    my $lvmdump_regex = qr{/root/lvmdump-.*?-\d+\.tgz};
-    my $out           = script_output 'lvmdump';
-    if ($out =~ /(?<lvmdump_gzip>$lvmdump_regex)/) {
-        upload_logs "$+{lvmdump_gzip}";
-    }
-    $self->save_and_upload_log('lvm dumpconfig', '/tmp/lvm_dumpconf.out');
-    $self->SUPER::post_fail_hook;
 }
 
 1;

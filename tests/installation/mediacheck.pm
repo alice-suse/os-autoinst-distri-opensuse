@@ -13,8 +13,9 @@
 
 use base "opensusebasetest";
 use strict;
+use warnings;
 use testapi;
-use bootloader_setup qw(ensure_shim_import pre_bootmenu_setup);
+use bootloader_setup qw(ensure_shim_import pre_bootmenu_setup select_bootmenu_more);
 
 sub run {
     my $self       = shift;
@@ -26,7 +27,7 @@ sub run {
     }
 
     ensure_shim_import;
-    $self->select_bootmenu_more('inst-onmediacheck', 1);
+    select_bootmenu_more('inst-onmediacheck', 1);
 
     while ($iterations++ < 3) {
         # the timeout is insane - but some old DVDs took almost forever, could

@@ -13,35 +13,48 @@
 use base 'xen';
 
 use strict;
+use warnings;
 use testapi;
 use utils;
 
 sub run {
     my $self = shift;
 
+    # Ensure additional package is installed
+    zypper_call '-t in libvirt-client';
+
     assert_script_run qq(echo 'log_level = 1
     log_filters="3:remote 4:event 3:json 3:rpc"
     log_outputs="1:file:/var/log/libvirt/libvirtd.log"' >> /etc/libvirt/libvirtd.conf);
     systemctl 'restart libvirtd';
 
-    # Ensure additional package is installed
-    zypper_call '-t in libvirt-client';
+    if (script_run("virsh net-list --all | grep default") != 0) {
+        assert_script_run qq(echo "<network>
+<name>default</name>
+<uuid>9a05da11-e96b-47f3-8253-a3a482e445f5</uuid>
+<forward mode='nat'/>
+<bridge name='virbr0' stp='on' delay='0'/>
+<mac address='52:54:00:0a:cd:21'/>
+<ip address='192.168.122.1' netmask='255.255.255.0'>
+<dhcp><range start='192.168.122.2' end='192.168.122.254'/></dhcp>
+</ip>
+        </network>" > ~/default.xml);
+        assert_script_run "virsh net-define --file ~/default.xml";
+    }
+    assert_script_run "virsh net-start default || true";
+    assert_script_run "virsh net-autostart default";
 
     # Show all guests
-    assert_script_run 'xl list';
-    save_screenshot;
+    assert_script_run 'virsh list --all';
+    assert_script_run "mkdir -p /var/lib/libvirt/images/xen/";
+    wait_still_screen 1;
 
     # Install every defined guest
-    # TODO: It will be nice to run this in parallel
     foreach my $guest (keys %xen::guests) {
         $self->create_guest($guest, 'virt-install');
-        # Show guest details
-        assert_script_run "xl list $guest";
     }
 
-    # All guests should be now installed, show them
-    assert_script_run 'xl list';
-    save_screenshot;
+    wait_still_screen 30;    # Here we are sure guests are still in process of installation
 }
 
 1;

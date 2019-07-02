@@ -75,20 +75,17 @@ sub load_caasp_inst_tests {
     }
     else {
         # One Click Installer removed in CaaSP 4.0
-        if (is_caasp('4.0+') && !update_scheduled('dup')) {
+        if (is_caasp('4.0+') && !update_scheduled('migration')) {
             loadtest 'caasp/oci_overview';
             loadtest 'caasp/oci_keyboard';
             loadtest 'installation/accept_license';
-            if (check_var('REGISTER', 'installation')) {
-                loadtest 'installation/scc_registration';
-            } else {
-                loadtest 'installation/skip_registration';
-            }
+            loadtest 'installation/scc_registration';
             loadtest 'installation/system_role';
             loadtest 'installation/caasp_roleconf' unless check_var('SYSTEM_ROLE', 'plain');
             loadtest 'installation/user_settings_root';
             loadtest 'installation/releasenotes';
             loadtest 'installation/installation_overview';
+            loadtest 'installation/disable_grub_timeout' unless get_var('STACK_ROLE');
             loadtest 'installation/start_install';
 
             # Can not start installation with partitioning error
@@ -123,7 +120,6 @@ sub load_feature_tests {
     # reliable on Hyper-V, no point in executing it as it always fails.
     loadtest 'caasp/create_autoyast' unless check_var('VIRSH_VMM_FAMILY', 'hyperv');
     loadtest 'caasp/libzypp_config';
-    loadtest 'caasp/overlayfs' unless is_caasp('4.0+');
     loadtest 'caasp/services_enabled';
     loadtest 'caasp/one_line_checks';
     loadtest 'caasp/nfs_client' if get_var('NFS_SHARE');
@@ -146,7 +142,7 @@ sub load_feature_tests {
 
 sub load_stack_tests {
     if (check_var 'STACK_ROLE', 'controller') {
-        if (update_scheduled 'dup') {
+        if (update_scheduled 'migration') {
             loadtest 'caasp/shift_version', name => 'ver=dec';
         }
         loadtest 'caasp/stack_initialize';
@@ -155,16 +151,13 @@ sub load_stack_tests {
         loadtest 'caasp/stack_kubernetes';
 
         # CAP deployment needs a lot of resources
-        if (check_var('MACHINE', 'cap_x86_64')) {
-            loadtest 'caasp/stack_cap';
-        }
-        # [Update or] Reboot to check cluster will survive
-        if (update_scheduled) {
-            loadtest 'caasp/stack_update';
-        } else {
-            loadtest 'caasp/stack_reboot';
-        }
-        if (update_scheduled 'dup') {
+        loadtest 'caasp/stack_cap' if check_var('MACHINE', 'cap_x86_64');
+
+        # Update & Reboot to check cluster will survive
+        loadtest 'caasp/stack_update' if update_scheduled();
+        loadtest 'caasp/stack_reboot';
+
+        if (update_scheduled 'migration') {
             loadtest 'caasp/shift_version', name => 'ver=inc';
         }
         # Add and remove cluster nodes
@@ -178,7 +171,6 @@ sub load_stack_tests {
     }
     else {
         loadtest 'caasp/stack_' . get_var('STACK_ROLE');
-        loadtest 'caasp/register_and_check' if is_caasp('qam');
     }
 }
 
@@ -213,7 +205,7 @@ if (get_var('STACK_ROLE')) {
         loadtest "support_server/setup";
     }
     else {
-        if (update_scheduled 'dup') {
+        if (update_scheduled 'migration') {
             loadtest 'caasp/shift_version', name => 'ver=dec';
         }
         load_caasp_boot_tests;

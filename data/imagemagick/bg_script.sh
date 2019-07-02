@@ -200,7 +200,11 @@ convert -size 100x100  gradient:blue              gradient_range1.jpg
 cme gradient_range1.jpg 48.jpg
 
 echo "trans_threshold.png"
-convert test.png -channel A -threshold -1 +channel trans_threshold.png
+if grep -q 'VERSION=\"15' /etc/os-release ; then
+    convert test.png -channel A -threshold 100% +channel trans_threshold.png
+else
+    convert test.png -channel A -threshold -1 +channel trans_threshold.png
+fi
 cme trans_threshold.png 49.png
 
 echo "gradient_range2.jpg"
@@ -460,7 +464,11 @@ convert -size 100x100 xc: -sparse-color  Barycentric  '30,10 red   10,80 blue   
 cme sparse_barycentric.png 113.png
 
 echo "sparse_bary_triangle_2.png"
-convert -size 100x100 xc:none -draw "polygon 30,10  10,80  90,90"  -sparse-color Barycentric '30,10 red   10,80 blue   90,90 lime'  sparse_bary_triangle_2.png
+if grep -q 'VERSION=\"15' /etc/os-release ; then
+    convert -channel RGB -size 100x100 xc:none -draw "polygon 30,10  10,80  90,90" -sparse-color Barycentric '30,10 red   10,80 blue   90,90 lime'  sparse_bary_triangle_2.png
+else
+    convert -size 100x100 xc:none -draw "polygon 30,10  10,80  90,90"  -sparse-color Barycentric '30,10 red   10,80 blue   90,90 lime'  sparse_bary_triangle_2.png
+fi
 cme sparse_bary_triangle_2.png 114.png
 
 echo "sparse_bary_0.gif"
@@ -616,7 +624,11 @@ convert plasma_fractal2.jpg  -blur 0x1 -paint 8  plasma_paint.jpg
 cme plasma_paint.jpg 152.jpg
 
 echo "plasma_emboss.jpg"
-convert plasma_fractal2.jpg  -blur 0x5 -emboss 2 plasma_emboss.jpg
+if grep -q 'VERSION=\"15' /etc/os-release ; then
+    convert plasma_fractal2.jpg -channel RGB -blur 0x5 -emboss 2 plasma_emboss.jpg
+else
+    convert plasma_fractal2.jpg -blur 0x5 -emboss 2 plasma_emboss.jpg
+fi
 cme plasma_emboss.jpg 153.jpg
 
 echo "plasma_sharp.jpg"
@@ -844,7 +856,7 @@ convert tree.gif  -write mpr:tile +delete  granite: -fill mpr:tile  -draw 'color
 cme tile_mpr_reset.gif 209.gif
 
 echo "tile_mpr_fill.gif"
-convert tree.gif -write mpr:tile +delete  granite:  -tile mpr:tile  -draw 'circle 64,64 10,50'  tile_mpr_fill.gif
+convert tree.gif -write mpr:tile +delete  granite:  -tile mpr:tile  -draw 'circle 64,64 0,64'  tile_mpr_fill.gif
 cme tile_mpr_fill.gif 210.gif
 
 echo "tile_distort.gif"

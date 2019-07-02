@@ -11,8 +11,9 @@
 #   reboot into the installed system
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
+use base 'y2_installbase';
 use strict;
-use base 'y2logsstep';
+use warnings;
 use testapi;
 use lockapi;
 use utils;
@@ -31,7 +32,7 @@ sub run {
     }
     # while technically SUT has a different network than the BMC
     # we require ssh installation anyway
-    if (check_var('BACKEND', 'ipmi') || check_var('BACKEND', 'spvm')) {
+    if (get_var('BACKEND', '') =~ /ipmi|spvm/) {
         use_ssh_serial_console;
         # set serial console for xen
         set_serial_console_on_vh('/mnt', '', 'xen') if (get_var('XEN') || check_var('HOST_HYPERVISOR', 'xen'));
@@ -43,7 +44,8 @@ sub run {
         $self->get_ip_address();
     }
     # We don't change network setup here, so should work
-    $self->save_upload_y2logs(no_ntwrk_recovery => 1);
+    # We don't parse logs unless it's detect_yast2_failures scenario
+    $self->save_upload_y2logs(no_ntwrk_recovery => 1, skip_logs_investigation => !get_var('ASSERT_Y2LOGS'));
 }
 
 sub test_flags {

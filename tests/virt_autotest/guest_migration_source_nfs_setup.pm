@@ -12,6 +12,7 @@
 
 use base multi_machine_job_base;
 use strict;
+use warnings;
 use testapi;
 use lockapi;
 use mmapi;
@@ -36,7 +37,7 @@ sub run {
     $self->execute_script_run($cmd_write_exports, 500);
 
     #Restart the nfs service
-    $self->execute_script_run("rcnfsserver restart", 500);
+    $self->execute_script_run("rcnfs-server restart", 500);
     set_var('NFS_DONE', 1);
     bmwqemu::save_vars();
 

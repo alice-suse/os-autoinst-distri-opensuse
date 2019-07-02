@@ -2,19 +2,22 @@ package susedistribution;
 use base 'distribution';
 use serial_terminal ();
 use strict;
+use warnings;
 use utils qw(
   disable_serial_getty
   ensure_serialdev_permissions
-  ensure_unlocked_desktop
   get_root_console_tty
   get_x11_console_tty
   pkcon_quit
   save_svirt_pty
   type_string_slow
+  type_string_very_slow
   zypper_call
 );
-use version_utils qw(is_hyperv_in_gui is_sle is_leap is_svirt_except_s390x);
+use version_utils qw(is_hyperv_in_gui is_sle is_leap is_svirt_except_s390x is_tumbleweed is_opensuse);
+use x11utils qw(desktop_runner_hotkey ensure_unlocked_desktop);
 use Utils::Backends 'use_ssh_serial_console';
+use backend::svirt qw(SERIAL_TERMINAL_DEFAULT_DEVICE SERIAL_TERMINAL_DEFAULT_PORT);
 
 # Base class implementation of distribution class necessary for testapi
 
@@ -139,33 +142,51 @@ sub init_cmd {
     ## keyboard cmd vars end
 }
 
-
 sub init_desktop_runner {
     my ($program, $timeout) = @_;
     $timeout //= 30;
+    my $hotkey = desktop_runner_hotkey;
 
-    send_key(check_var('DESKTOP', 'minimalx') ? 'super-spc' : 'alt-f2');
+    send_key($hotkey);
 
     mouse_hide(1);
     if (!check_screen('desktop-runner', $timeout)) {
-        record_info('workaround', 'desktop-runner does not show up on alt-f2, retrying up to three times (see bsc#978027)');
+        record_info('workaround', "desktop-runner does not show up on $hotkey, retrying up to three times (see bsc#978027)");
         send_key 'esc';    # To avoid failing needle on missing 'alt' key - poo#20608
-        send_key_until_needlematch 'desktop-runner', 'alt-f2', 3, 10;
+        send_key_until_needlematch 'desktop-runner', $hotkey, 3, 10;
     }
-    # krunner may use auto-completion which sometimes gets confused by
-    # too fast typing or looses characters because of the load caused (also
-    # see below). See https://progress.opensuse.org/issues/18200
-    if (check_var('DESKTOP', 'kde')) {
-        type_string_slow $program;
-    }
-    else {
-        type_string $program;
+    for (my $retries = 10; $retries > 0; $retries--) {
+        # krunner may use auto-completion which sometimes gets confused by
+        # too fast typing or looses characters because of the load caused (also
+        # see below), especially in wayland.
+        # See https://progress.opensuse.org/issues/18200 as well as
+        # https://progress.opensuse.org/issues/35589
+        if (check_var('DESKTOP', 'kde')) {
+            if (get_var('WAYLAND')) {
+                wait_still_screen(3);
+                type_string_very_slow substr $program, 0, 2;
+                wait_still_screen(3);
+                type_string_very_slow substr $program, 2;
+            } else {
+                type_string_slow $program;
+            }
+        } else {
+            type_string $program;
+        }
+        # Make sure we have plasma suggestions as it may take time, especially on boot or under load. Otherwise, try again
+        last unless (check_var('DESKTOP', 'kde') && !check_screen('desktop-runner-plasma-suggestions'));
+        if ($retries > 1) {
+            # Prepare for next attempt
+            send_key 'esc';    # Escape from desktop-runner
+            sleep(30);         # Leave some time for the system to recover
+            send_key_until_needlematch 'desktop-runner', $hotkey, 3, 10;
+        }
     }
 }
 
 =head2 x11_start_program
 
-  x11_start_program($program [, timeout => $timeout ] [, no_wait => 0|1 ] [, valid => 0|1, [target_match => $target_match, ] [match_timeout => $match_timeout, ] [match_no_wait => 0|1 ]]);
+  x11_start_program($program [, timeout => $timeout ] [, no_wait => 0|1 ] [, valid => 0|1 [, target_match => $target_match ] [, match_timeout => $match_timeout ] [, match_no_wait => 0|1 ] [, match_typed => 0|1 ]]);
 
 Start the program C<$program> in an X11 session using the I<desktop-runner>
 and looking for a target screen to match.
@@ -218,7 +239,7 @@ sub x11_start_program {
         send_key 'esc';
         init_desktop_runner($program, $timeout);
     }
-    wait_still_screen(1);
+    wait_still_screen(3);
     save_screenshot;
     send_key 'ret';
     # As above especially krunner seems to take some time before disappearing
@@ -294,7 +315,9 @@ sub ensure_installed {
     elsif ($ret !~ /pkcon-status-0/) {
         die "pkcon install did not succeed, return code: $ret";
     }
+    wait_still_screen 1;
     send_key("alt-f4");    # close xterm
+    assert_screen 'generic-desktop' if is_opensuse;
 }
 
 sub script_sudo {
@@ -378,6 +401,11 @@ sub init_consoles {
                 password => $testapi::password
             });
         set_var('SVIRT_VNC_CONSOLE', 'sut');
+    } else {
+        # sut-serial (serial terminal: emulation of QEMU's virtio console for svirt)
+        $self->add_console('root-sut-serial', 'ssh-virtsh-serial', {
+                pty_dev     => SERIAL_TERMINAL_DEFAULT_DEVICE,
+                target_port => SERIAL_TERMINAL_DEFAULT_PORT});
     }
 
     if (get_var('BACKEND', '') =~ /qemu|ikvm|generalhw/
@@ -403,7 +431,7 @@ sub init_consoles {
                 password => get_var('VIRSH_GUEST_PASSWORD')});
     }
 
-    if (check_var('BACKEND', 'ikvm') || check_var('BACKEND', 'ipmi') || check_var('BACKEND', 'spvm')) {
+    if (get_var('BACKEND', '') =~ /ikvm|ipmi|spvm/) {
         $self->add_console(
             'root-ssh',
             'ssh-xterm',
@@ -411,15 +439,16 @@ sub init_consoles {
                 hostname => get_required_var('SUT_IP'),
                 password => $testapi::password,
                 user     => 'root',
-                serial   => 'mkfifo /dev/sshserial; tail -f /dev/sshserial'
+                serial   => 'mkfifo /dev/sshserial; tail -fn +1 /dev/sshserial',
+                gui      => 1
             });
     }
 
-    if (check_var('BACKEND', 'ipmi') || check_var('BACKEND', 's390x') || get_var('S390_ZKVM') || check_var('BACKEND', 'spvm')) {
+    if (get_var('BACKEND', '') =~ /ipmi|s390x|spvm/ || get_var('S390_ZKVM')) {
         my $hostname;
 
         $hostname = get_var('VIRSH_GUEST')     if get_var('S390_ZKVM');
-        $hostname = get_required_var('SUT_IP') if check_var('BACKEND', 'ipmi') || check_var('BACKEND', 'spvm');
+        $hostname = get_required_var('SUT_IP') if get_var('BACKEND', '') =~ /ipmi|spvm/;
 
         if (check_var('BACKEND', 's390x')) {
 
@@ -565,7 +594,7 @@ Return console VT number with regards to it's name.
 =cut
 sub console_nr {
     my ($console) = @_;
-    $console =~ m/^(\w+)-(console|virtio-terminal|ssh|shell)/;
+    $console =~ m/^(\w+)-(console|virtio-terminal|sut-serial|ssh|shell)/;
     my ($name) = ($1) || return;
     my $nr = 4;
     $nr = get_root_console_tty if ($name eq 'root');
@@ -596,7 +625,7 @@ sub activate_console {
             # login as root, who does not have a password on Live-CDs
             wait_screen_change { type_string "root\n" };
         }
-        elsif (check_var('BACKEND', 'ipmi') || check_var('BACKEND', 'spvm')) {
+        elsif (get_var('BACKEND', '') =~ /ipmi|spvm/) {
             # Select configure serial and redirect to root-ssh instead
             use_ssh_serial_console;
             return;
@@ -613,7 +642,7 @@ sub activate_console {
         return;
     }
 
-    $console =~ m/^(\w+)-(console|virtio-terminal|ssh|shell)/;
+    $console =~ m/^(\w+)-(console|virtio-terminal|sut-serial|ssh|shell)/;
     my ($name, $user, $type) = ($1, $1, $2);
     $name = $user //= '';
     $type //= '';
@@ -627,8 +656,8 @@ sub activate_console {
     diag "activate_console, console: $console, type: $type";
     if ($type eq 'console') {
         # different handling for ssh consoles on s390x zVM
-        if (check_var('BACKEND', 's390x') || get_var('S390_ZKVM') || check_var('BACKEND', 'ipmi') || check_var('BACKEND', 'spvm')) {
-            diag 'backend s390x || zkvm || ipmi || spvm';
+        if (get_var('BACKEND', '') =~ /ipmi|s390x|spvm/ || get_var('S390_ZKVM')) {
+            diag 'backend ipmi || spvm || s390x || zkvm';
             $user ||= 'root';
             handle_password_prompt;
             ensure_user($user);
@@ -657,7 +686,7 @@ sub activate_console {
         $self->set_standard_prompt($user, skip_set_standard_prompt => $args{skip_set_standard_prompt});
         assert_screen $console;
     }
-    elsif ($type eq 'virtio-terminal') {
+    elsif ($type =~ /^(virtio-terminal|sut-serial)$/) {
         serial_terminal::login($user, $self->{serial_term_prompt});
     }
     elsif ($console eq 'novalink-ssh') {
@@ -683,8 +712,8 @@ sub activate_console {
     }
     elsif (
         $console eq 'installation'
-        && (((check_var('BACKEND', 's390x') || check_var('BACKEND', 'ipmi') || check_var('BACKEND', 'spvm') || get_var('S390_ZKVM')))
-            && (check_var('VIDEOMODE', 'text') || check_var('VIDEOMODE', 'ssh-x'))))
+        && ((get_var('BACKEND', '') =~ /ipmi|s390x|spvm/) || get_var('S390_ZKVM'))
+        && (get_var('VIDEOMODE', '') =~ /text|ssh-x/))
     {
         diag 'activate_console called with installation for ssh based consoles';
         $user ||= 'root';
@@ -728,10 +757,7 @@ sub console_selected {
     my ($self, $console, %args) = @_;
     $args{await_console} //= 1;
     $args{tags}          //= $console;
-    $args{ignore}        //= qr{sut|root-virtio-terminal|iucvconn|svirt|root-ssh|hyperv-intermediary};
-    # If we connect to 'sut' VNC display "too early" the VNC server won't be
-    # ready and we will be left with a blank screen.
-    sleep 5 if check_var('VIRSH_VMM_FAMILY', 'vmware') && $console eq 'sut';
+    $args{ignore}        //= qr{sut|root-virtio-terminal|root-sut-serial|iucvconn|svirt|root-ssh|hyperv-intermediary};
 
     if ($args{tags} =~ $args{ignore} || !$args{await_console}) {
         set_var('CONSOLE_JUST_ACTIVATED', 0);

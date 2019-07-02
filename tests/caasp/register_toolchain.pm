@@ -11,9 +11,10 @@
 # Maintainer: Tomas Hehejik <thehejik@suse.com>
 
 use strict;
+use warnings;
 use base "opensusebasetest";
 use testapi;
-use caasp 'process_reboot';
+use caasp 'microos_reboot';
 
 sub run {
     my $list_addons = script_output('LANG=C SUSEConnect --list');
@@ -29,7 +30,7 @@ sub run {
     assert_script_run 'transactional-update pkg install --no-confirm gcc gdb make strace tcpdump';
 
     # Reboot to use a new btrfs snapshot with installed tools
-    process_reboot 1;
+    microos_reboot 1;
 
     # tcpdump test
     record_info 'tcpdump';

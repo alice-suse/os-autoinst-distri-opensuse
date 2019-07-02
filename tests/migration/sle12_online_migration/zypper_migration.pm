@@ -1,6 +1,6 @@
 # SLE12 online migration tests
 #
-# Copyright © 2016-2018 SUSE LLC
+# Copyright © 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -12,9 +12,11 @@
 
 use base "installbasetest";
 use strict;
+use warnings;
 use testapi;
 use utils;
 use power_action_utils 'power_action';
+use version_utils qw(is_desktop_installed is_sles4sap);
 
 sub run {
     my $self = shift;
@@ -32,7 +34,7 @@ sub run {
     my $zypper_migration_failed       = qr/^Migration failed/m;
     my $zypper_migration_license      = qr/Do you agree with the terms of the license\? \[y/m;
     my $zypper_migration_urlerror     = qr/URI::InvalidURIError/m;
-    my $zypper_migration_reterror     = qr/^No migration available|^Can't get available migrations/m;
+    my $zypper_migration_reterror     = qr/^No migration available|Can't get available migrations/m;
 
     # start migration
     script_run("(zypper migration;echo ZYPPER-DONE) | tee /dev/$serialdev", 0);
@@ -103,8 +105,12 @@ sub run {
     }
     power_action('reboot', keepconsole => 1, textmode => 1);
 
+    # Do not attempt to log into the desktop of a system installed with SLES4SAP
+    # being prepared for upgrade, as it does not have an unprivileged user to test
+    # with other than the SAP Administrator
+    #
     # sometimes reboot takes longer time after online migration, give more time
-    $self->wait_boot(bootloader_time => 300);
+    $self->wait_boot(textmode => !is_desktop_installed, bootloader_time => 300, ready_time => 600, nologin => is_sles4sap);
 }
 
 1;

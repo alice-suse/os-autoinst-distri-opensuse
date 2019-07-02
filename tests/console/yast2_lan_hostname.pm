@@ -7,15 +7,16 @@
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 
-
 # Summary: yast2 lan hostname via DHCP test https://bugzilla.suse.com/show_bug.cgi?id=984890
 # Maintainer: Jozef Pupava <jpupava@suse.com>
 
-use base "console_yasttest";
+use parent "y2_module_consoletest";
 use strict;
+use warnings;
 use testapi;
 use utils;
-use y2_common 'accept_warning_network_manager_default';
+use version_utils ':VERSION';
+
 
 sub hostname_via_dhcp {
     my $dhcp = shift;
@@ -24,14 +25,19 @@ sub hostname_via_dhcp {
     $cmd{hostname_dns_tab} = 'alt-s';
     $cmd{home}             = 'home';
     $cmd{spc}              = 'spc';
-
-    type_string "yast2 lan\n";
-    accept_warning_network_manager_default;
+    y2_module_consoletest::yast2_console_exec(yast2_module => 'lan');
+    y2_module_basetest::accept_warning_network_manager_default;
     assert_screen 'yast2_lan';
+
     # Hostname/DNS tab
     send_key $cmd{hostname_dns_tab};
     assert_screen "yast2_lan-hostname-tab";
-    for (1 .. 4) { send_key 'tab' }    # go to roll-down list
+
+    # We have different postition for this control
+    # go to roll-down list
+    my $ntab = (is_sle('<=15') || is_leap('<=15.0')) ? 4 : 2;
+    for (1 .. $ntab) { send_key 'tab' }
+
     wait_screen_change { send_key 'down'; };    # open roll-down list
     send_key $cmd{home};
     assert_screen("yast2_lan-hostname-DHCP-no");    # check that topmost option is selected
@@ -41,6 +47,7 @@ sub hostname_via_dhcp {
     send_key $cmd{ok};
     assert_screen 'console-visible';                           # yast module exited
     wait_still_screen;
+
     if ($dhcp eq 'no') {
         assert_script_run 'grep DHCLIENT_SET_HOSTNAME /etc/sysconfig/network/dhcp|grep no';
     }
@@ -63,7 +70,9 @@ sub run {
 }
 
 sub post_fail_hook {
-    assert_script_run 'iface=`ip -o addr show scope global | head -n1 | cut -d" " -f2`';
+    my ($self) = @_;
+    $self->SUPER::post_fail_hook;
+    script_run 'iface=`ip -o addr show scope global | head -n1 | cut -d" " -f2`';
     upload_logs '/etc/sysconfig/network/ifcfg-$iface';
     upload_logs '/etc/sysconfig/network/dhcp';
 }

@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2016-2018 SUSE LLC
+# Copyright © 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -13,12 +13,16 @@
 
 use base "x11test";
 use strict;
+use warnings;
 use testapi;
 use lockapi 'mutex_create';
 use mmapi 'wait_for_children';
-use utils qw(systemctl turn_off_gnome_screensaver);
-use y2x11test qw(setup_static_mm_network %setup_nis_nfs_x11);
+use utils 'systemctl';
+use mm_network 'setup_static_mm_network';
+use y2_module_guitest '%setup_nis_nfs_x11';
 use version_utils 'is_sle';
+use x11utils 'turn_off_gnome_screensaver';
+use y2_module_consoletest;
 
 sub setup_verification {
     script_run 'rpcinfo -u localhost ypserv';    # ypserv is running
@@ -131,15 +135,15 @@ sub run {
         systemctl 'stop ' . $self->firewall;
         record_soft_failure('bsc#999873');
     }
-    script_run("yast2 nis_server; echo yast2-nis-server-status-\$? > /dev/$serialdev", 0);
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'nis_server');
     nis_server_configuration();
-    wait_serial("yast2-nis-server-status-0", 360) || die "'yast2 nis server' didn't finish";
+    wait_serial("$module_name-0", 360) || die "'yast2 nis server' didn't finish";
     assert_screen 'yast2_closed_xterm_visible';
     # NIS Server is configured and running, configuration continues on client side
     mutex_create('nis_ready');
-    script_run("yast2 nfs_server; echo yast2-nfs-server-status-\$? > /dev/$serialdev", 0);
+    $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'nfs_server');
     nfs_server_configuration();
-    wait_serial("yast2-nfs-server-status-0", 360) || die "'yast2 nfs server' didn't finish";
+    wait_serial("$module_name-0", 360) || die "'yast2 nfs server' didn't finish";
     assert_screen 'yast2_closed_xterm_visible', 200;
     # NFS Server is configured and running, configuration continues on client side
     mutex_create('nfs_ready');

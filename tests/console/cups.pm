@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright 2018 SUSE LLC
+# Copyright 2018-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -14,7 +14,8 @@ use base 'consoletest';
 use strict;
 use warnings;
 use testapi;
-use utils;
+use utils qw(systemctl zypper_call);
+use Utils::Systemd 'disable_and_stop_service';
 use version_utils 'is_jeos';
 
 sub run {
@@ -40,10 +41,11 @@ sub run {
     validate_script_output 'lpstat -p -d -o', sub { m/printer_tmp is idle/ };
 
     assert_script_run 'curl --fail -s -O -L ' . data_url('console/sample.ps');
+    assert_script_run 'curl --fail -s -O -L ' . data_url('console/testpage.pdf');
 
     # Submit print job to the queue, list them and cancel them
     record_info "lp, lpstat, cancel", "Submitting and canceling jobs";
-    foreach my $printer (qw/printer_tmp printer_null/) {
+    foreach my $printer (qw(printer_tmp printer_null)) {
         assert_script_run "cupsdisable $printer";
         assert_script_run "lp -d $printer -o cpi=12 -o lpi=8 sample.ps";
         validate_script_output 'lpstat -o',          sub { m/$printer-\d+/ };
@@ -56,9 +58,9 @@ sub run {
 
     # Do the printing
     record_info "lp, lpq", "Printing jobs";
-    foreach my $printer (qw/printer_tmp printer_null/) {
+    foreach my $printer (qw(printer_tmp printer_null)) {
         assert_script_run "cupsenable $printer";
-        assert_script_run "lp -d $printer /usr/share/cups/data/default-testpage.pdf";
+        assert_script_run "lp -d $printer testpage.pdf";
         validate_script_output "lpq $printer", sub { m/is ready/ };
     }
 
@@ -68,10 +70,9 @@ sub run {
 
     # Remove printers
     record_info "lpadmin -x", "Removing printers";
-    assert_script_run "lpadmin -x $_" foreach (qw/printer_tmp printer_null/);
+    assert_script_run "lpadmin -x $_" foreach (qw(printer_tmp printer_null));
     validate_script_output 'lpstat -p -d -o 2>&1 || test $? -eq 1', sub { m/No destinations added/ };
-    systemctl 'disable cups.service';
-    systemctl 'stop cups.service';
+    disable_and_stop_service('cups.service');
     validate_script_output '{ systemctl --no-pager status cups.service | cat; } || test $? -eq 3', sub { m/Active:\s*inactive/ };
 }
 

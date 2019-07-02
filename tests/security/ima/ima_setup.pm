@@ -20,6 +20,7 @@
 
 use base "opensusebasetest";
 use strict;
+use warnings;
 use testapi;
 use utils;
 use bootloader_setup 'add_grub_cmdline_settings';
@@ -45,7 +46,7 @@ sub run {
 }
 
 sub test_flags {
-    return {fatal => 1};
+    return {milestone => 1, fatal => 1};
 }
 
 1;

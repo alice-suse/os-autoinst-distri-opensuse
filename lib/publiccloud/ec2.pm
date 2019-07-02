@@ -19,26 +19,15 @@ has ssh_key      => undef;
 has ssh_key_file => undef;
 has credentials  => undef;
 
-sub create_credentials {
+sub vault_create_credentials {
     my ($self) = @_;
 
-    if (!defined($self->credentials)) {
-        my $credentials = $self->do_rest_api('/ec2/key', method => 'post');
-        $self->credentials($credentials);
-        $self->key_id($credentials->{key_id});
-        $self->key_secret($credentials->{secret});
-    }
+    record_info('INFO', 'Get credentials from VAULT server.');
+    my $res = $self->vault_api('/v1/aws/creds/openqa-role', method => 'get');
+    $self->vault_lease_id($res->{lease_id});
+    $self->key_id($res->{data}->{access_key});
+    $self->key_secret($res->{data}->{secret_key});
     die('Failed to retrieve key') unless (defined($self->key_id) && defined($self->key_secret));
-}
-
-sub delete_credentials {
-    my ($self) = @_;
-
-    return unless (defined($self->credentials));
-
-    my $key_id = $self->credentials->{key_id};
-    $self->do_rest_api('/ec2/key/' . $key_id, method => 'delete');
-    $self->credentials(undef);
 }
 
 sub _check_credentials {
@@ -56,7 +45,7 @@ sub init {
     $self->SUPER::init();
 
     if (!defined($self->key_id) || !defined($self->key_secret)) {
-        $self->create_credentials();
+        $self->vault_create_credentials();
     }
 
     assert_script_run("export AWS_ACCESS_KEY_ID=" . $self->key_id);
@@ -114,6 +103,12 @@ sub upload_img {
     die("Create key-pair failed") unless ($self->create_keypair($self->prefix . time, 'QA_SSH_KEY.pem'));
 
     my ($img_name) = $file =~ /([^\/]+)$/;
+    my $sec_group  = get_var('PUBLIC_CLOUD_EC2_UPLOAD_SECGROUP');
+    my $vpc_subnet = get_var('PUBLIC_CLOUD_EC2_UPLOAD_VPCSUBNET');
+    my $ami_id     = get_var('PUBLIC_CLOUD_EC2_UPLOAD_AMI');         # Used for helper VM to create/build the image on CSP
+                                                                     # When uploading a on-demand image, this ID should point
+                                                                     # to and on-demand image.
+                                                                     # If not specified, the id gets read from ec2utils.conf file.
 
     assert_script_run("ec2uploadimg --access-id '"
           . $self->key_id
@@ -123,19 +118,23 @@ sub upload_img {
           . "--grub2 "
           . "--machine 'x86_64' "
           . "-n '" . $self->prefix . '-' . $img_name . "' "
-          . (($img_name =~ /hvm/i) ? "--virt-type hvm --sriov-support " : "--virt-type para ")
-          . (($img_name !~ /byos/i) ? '--use-root-swap ' : '')
+          . "--virt-type hvm --sriov-support "
+          . (($img_name !~ /byos/i) ? '--use-root-swap ' : '--ena-support ')
           . "--verbose "
           . "--regions '" . $self->region . "' "
           . "--ssh-key-pair '" . $self->ssh_key . "' "
           . "--private-key-file " . $self->ssh_key_file . " "
           . "-d 'OpenQA tests' "
+          . ($sec_group  ? "--security-group-ids '" . $sec_group . "' " : '')
+          . ($vpc_subnet ? "--vpc-subnet-id '" . $vpc_subnet . "' "     : '')
+          . ($ami_id     ? "--ec2-ami '" . $ami_id . "' "               : '')
           . "'$file'",
         timeout => 60 * 60
     );
 
     my $ami = $self->find_img($img_name);
     die("Cannot find image after upload!") unless $ami;
+    validate_script_output('aws ec2 describe-images --image-id ' . $ami, sub { /"EnaSupport":\s+true/ });
     return $ami;
 }
 
@@ -155,9 +154,9 @@ sub ipa {
 
 sub cleanup {
     my ($self) = @_;
-    $self->SUPER::cleanup();
+    $self->terraform_destroy() if ($self->terraform_applied);
     $self->delete_keypair();
-    $self->delete_credentials();
+    $self->vault_revoke();
 }
 
 1;

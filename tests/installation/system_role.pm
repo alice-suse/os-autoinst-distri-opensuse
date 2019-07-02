@@ -11,8 +11,9 @@
 # Maintainer: Jozef Pupava <jpupava@suse.com>, Joaquín Rivera <jeriveramoya@suse.com>
 # Tags: poo#16650, poo#25850
 
+use base 'y2_installbase';
 use strict;
-use base "y2logsstep";
+use warnings;
 use testapi;
 use version_utils qw(is_sle is_opensuse is_caasp);
 
@@ -65,6 +66,10 @@ sub assert_system_role {
 }
 
 sub run {
+    return record_info(
+        "Skip screen",
+        "System Role screen is displayed only for x86_64 in SLE-12-SP5 due to it has more than one role available"
+    ) if (is_sle('=12-SP5') && !check_var('ARCH', 'x86_64'));
     assert_system_role;
 }
 

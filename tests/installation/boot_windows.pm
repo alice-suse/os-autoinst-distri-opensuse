@@ -11,8 +11,9 @@
 # Summary: Boot into MS Windows from grub
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
-use base "y2logsstep";
+use base 'y2_installbase';
 use strict;
+use warnings;
 use testapi;
 use windows_utils;
 

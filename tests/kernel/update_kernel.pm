@@ -245,7 +245,7 @@ sub update_kgraft {
 
 sub boot_to_console {
     my ($self) = @_;
-    $self->wait_boot;
+    $self->wait_boot unless check_var('BACKEND', 'ipmi') && get_var('LTP_BAREMETAL');
     if (check_var('BACKEND', 'ipmi')) {
         use_ssh_serial_console;
     }
@@ -296,6 +296,7 @@ sub run {
     }
 
     power_action('reboot', textmode => 1);
+    $self->wait_boot if get_var('LTP_BAREMETAL');
 }
 
 sub test_flags {

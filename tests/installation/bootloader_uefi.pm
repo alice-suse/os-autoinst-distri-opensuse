@@ -13,6 +13,7 @@
 
 use base "installbasetest";
 use strict;
+use warnings;
 
 use Time::HiRes 'sleep';
 
@@ -25,6 +26,8 @@ use version_utils qw(is_jeos is_caasp);
 
 # hint: press shift-f10 trice for highest debug level
 sub run {
+    my ($self) = @_;
+
     if (get_var("IPXE")) {
         sleep 60;
         return;
@@ -54,10 +57,14 @@ sub run {
         sleep 5;
     }
     if (get_var("ZDUP")) {
-        # uefi bootloader has no "boot from harddisk" option. So we
-        # have to just reboot here
-        eject_cd;
-        power('reset');
+        # 'eject_cd' is broken ATM (at least on aarch64), so select HDD from menu - poo#47303
+        # Check we are booting the ISO
+        assert_screen 'inst-bootmenu';
+        # Select boot from HDD
+        send_key_until_needlematch 'inst-bootmenu-boot-harddisk', 'up';
+        send_key 'ret';
+        # use firmware boot manager of aarch64 to boot HDD
+        $self->handle_uefi_boot_disk_workaround if (check_var('ARCH', 'aarch64'));
         assert_screen("grub2");
         return;
     }

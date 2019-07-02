@@ -13,6 +13,7 @@
 
 use base "opensusebasetest";
 use strict;
+use warnings;
 use testapi;
 use power_action_utils 'power_action';
 
@@ -35,7 +36,7 @@ sub post_fail_hook {
 }
 
 sub test_flags {
-    return {milestone => 1};
+    return {fatal => 1, milestone => 1};
 }
 
 1;

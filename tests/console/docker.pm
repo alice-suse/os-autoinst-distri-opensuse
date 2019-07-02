@@ -27,6 +27,7 @@ use base "consoletest";
 use testapi;
 use utils;
 use strict;
+use warnings;
 use registration;
 use version_utils qw(is_sle is_leap);
 
@@ -53,7 +54,7 @@ sub run {
     test_seccomp();
 
     # images can be searched on the Docker Hub
-    validate_script_output("docker search --no-trunc opensuse", sub { m/This project contains the stable releases of the openSUSE distribution/ });
+    validate_script_output("docker search --no-trunc tumbleweed", sub { m/Official openSUSE Tumbleweed images/ });
 
     # images can be pulled from the Docker Hub
     #   - pull minimalistic alpine image of declared version using tag

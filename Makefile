@@ -32,8 +32,12 @@ tools/lib/: os-autoinst/
 check-links: tools/tidy tools/lib/ os-autoinst/
 
 .PHONY: check-links
-tidy: check-links
+tidy-check: check-links
 	tools/tidy --check
+
+.PHONY: tidy
+tidy:
+	tools/tidy
 
 .PHONY: unit-test
 unit-test:
@@ -74,10 +78,10 @@ test-dry:
 
 .PHONY: test-no-wait_idle
 test-no-wait_idle:
-	@! git grep -q wait_idle lib/ tests/
+	@! git --no-pager grep wait_idle lib/ tests/
 
 .PHONY: test-static
-test-static: tidy test-merge test-dry test-no-wait_idle test-unused-modules test-soft_failure-no-reference
+test-static: tidy-check test-merge test-dry test-no-wait_idle test-unused-modules test-soft_failure-no-reference
 
 .PHONY: test
 ifeq ($(TESTS),compile)
@@ -86,7 +90,7 @@ else
 test: unit-test test-static test-compile perlcritic
 endif
 
-PERLCRITIC=PERL5LIB=tools/lib/perlcritic:$$PERL5LIB perlcritic --quiet --gentle
+PERLCRITIC=PERL5LIB=tools/lib/perlcritic:$$PERL5LIB perlcritic --quiet --gentle --include "strict"
 
 .PHONY: perlcritic
 perlcritic: tools/lib/
@@ -98,4 +102,4 @@ test-unused-modules:
 
 .PHONY: test-soft_failure-no-reference
 test-soft_failure-no-reference:
-	@! git grep -q -E -e 'soft_failure\>.*\;' --and --not -e '([$$0-9a-z]+#[$$0-9]+|fate.suse.com/[0-9]|\$$[a-z]+)' lib/ tests/
+	@! git --no-pager grep -E -e 'soft_failure\>.*\;' --and --not -e '([$$0-9a-z]+#[$$0-9]+|fate.suse.com/[0-9]|\$$[a-z]+)' lib/ tests/

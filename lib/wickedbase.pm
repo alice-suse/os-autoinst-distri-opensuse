@@ -20,6 +20,7 @@ use testapi qw(is_serial_terminal :DEFAULT);
 use serial_terminal;
 use Carp;
 use strict;
+use warnings;
 
 =head2 wicked_command
 
@@ -125,6 +126,9 @@ sub get_ip {
     }
     elsif ($args{type} eq 'vlan_changed') {
         $ip = $args{is_wicked_ref} ? '192.0.2.110/24' : '192.0.2.111/24';
+    }
+    elsif ($args{type} eq 'macvtap') {
+        $ip = $args{is_wicked_ref} ? '10.0.2.17/15' : '10.0.2.18/15';
     }
     else {
         croak('Unknown ip type ' . ($args{type} || 'undef'));

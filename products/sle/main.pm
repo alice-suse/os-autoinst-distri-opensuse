@@ -779,33 +779,36 @@ elsif (get_var("VIRT_AUTOTEST")) {
     }
     else {
         if (!check_var('ARCH', 's390x')) {
-            load_boot_tests();
+            #load_boot_tests();
             if (get_var("AUTOYAST")) {
                 loadtest "autoyast/installation";
                 loadtest "virt_autotest/reboot_and_wait_up_normal";
             }
             else {
-                load_inst_tests();
+                #load_inst_tests();
                 loadtest "virt_autotest/login_console";
             }
         }
         elsif (check_var('ARCH', 's390x')) {
             loadtest "virt_autotest/login_console";
         }
-        loadtest "virt_autotest/install_package";
-        loadtest "virt_autotest/update_package";
-        loadtest "virt_autotest/reboot_and_wait_up_normal";
-        loadtest "virt_autotest/download_guest_assets" if (get_var("SKIP_GUEST_INSTALL") && is_x86_64);
+#        loadtest "virt_autotest/install_package";
+#        loadtest "virt_autotest/update_package";
+#        loadtest "virt_autotest/reboot_and_wait_up_normal";
+#        loadtest "virt_autotest/download_guest_assets" if (get_var("SKIP_GUEST_INSTALL") && is_x86_64);
     }
     if (get_var("VIRT_PRJ1_GUEST_INSTALL")) {
-        loadtest "virt_autotest/guest_installation_run";
-        if (!(get_var("GUEST_PATTERN") =~ /win/img) && is_x86_64) {
-            loadtest "virt_autotest/setup_dns_service";
-            loadtest "virt_autotest/set_config_as_glue";
-            loadtest "virtualization/xen/hotplugging" if get_var("ENABLE_HOTPLUGGING");
-            loadtest "virt_autotest/virsh_internal_snapshot";
-            loadtest "virt_autotest/virsh_external_snapshot";
-        }
+#        loadtest "virt_autotest/guest_installation_run";
+#        if (!(get_var("GUEST_PATTERN") =~ /win/img) && is_x86_64) {
+#            loadtest "virt_autotest/setup_dns_service";
+#            loadtest "virt_autotest/set_config_as_glue";
+#            loadtest "virtualization/xen/hotplugging" if get_var("ENABLE_HOTPLUGGING");
+#            loadtest "virt_autotest/virsh_internal_snapshot";
+#            loadtest "virt_autotest/virsh_external_snapshot";
+#        }
+	loadtest "virt_autotest/fail_moduleA";
+	loadtest "virt_autotest/fail_moduleB";
+
     }
     elsif (get_var("VIRT_PRJ2_HOST_UPGRADE")) {
         loadtest "virt_autotest/host_upgrade_generate_run_file";

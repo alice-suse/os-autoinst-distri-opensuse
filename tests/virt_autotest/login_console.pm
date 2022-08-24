@@ -72,101 +72,101 @@ sub login_to_console {
         select_console 'sol', await_console => 0;
     }
 
-    if (check_var('PERF_KERNEL', '1') or check_var('CPU_BUGS', '1') or check_var('VT_PERF', '1')) {
-        if (get_var("XEN") && check_var('CPU_BUGS', '1')) {
-            assert_screen([qw(pxe-qa-net-mitigation qa-net-selection)], 90);
-            send_key 'ret';
-            assert_screen([qw(grub2 grub1)], 60);
-            send_key 'up';
-        }
-        else {
-            send_key_until_needlematch(['linux-login', 'virttest-displaymanager'], 'ret', $counter, $timeout);
-            #use console based on ssh to avoid unstable ipmi
-            save_screenshot;
-            use_ssh_serial_console;
-            return;
-        }
-    }
-
-    if (!check_screen([qw(grub2 grub1 prague-pxe-menu)], 210)) {
-        ipmitool("chassis power reset");
-        reset_consoles;
-        select_console 'sol', await_console => 0;
-        check_screen([qw(grub2 grub1 prague-pxe-menu)], 90);
-    }
-
-    # If a PXE menu will appear just select the default option (and save us the time)
-    if (match_has_tag('prague-pxe-menu')) {
-        send_key 'ret';
-
-        check_screen([qw(grub2 grub1)], 60);
-    }
-
-    if (!get_var("reboot_for_upgrade_step")) {
-        set_var("first_reboot_after_upgrade", "no") if (check_var("first_reboot_after_upgrade", "yes"));
-        if (is_xen_host) {
-            #send key 'up' to stop grub timer counting down, to be more robust to select xen
-            send_key 'up';
-            save_screenshot;
-
-            for (1 .. 20) {
-                if ($_ == 10) {
-                    reset_consoles;
-                    select_console 'sol', await_console => 0;
-                }
-                send_key 'down';
-                last if check_screen 'virttest-bootmenu-xen-kernel', 5;
-            }
-        }
-    }
-    else {
-        save_screenshot;
-        #offline upgrade requires upgrading offline during reboot while online doesn't
-        if (check_var('offline_upgrade', 'yes')) {
-            #boot to upgrade menuentry
-            send_key 'down';
-            send_key 'ret';
-            #wait sshd up
-            die "Can not connect to machine to perform offline upgrade via ssh" unless (check_port_state(get_required_var('SUT_IP'), 22, 10));
-            save_screenshot;
-            #switch to ssh console
-            use_ssh_serial_console;
-            save_screenshot;
-            #start upgrade
-            enter_cmd("DISPLAY= yast.ssh");
-            save_screenshot;
-            #wait upgrade finish
-            assert_screen('rebootnow', 2700);
-            save_screenshot;
-            send_key 'ret';
-            #leave ssh console and switch to sol console
-            switch_from_ssh_to_sol_console(reset_console_flag => 'on');
-            save_screenshot;
-            send_key 'ret';
-            #wait grub2 boot menu after first stage upgrade
-            assert_screen('grub2', 300);
-            #wait sshd up after first stage upgrade
-            die "Can not connect to machine to perform offline upgrade second stage via ssh" unless (check_port_state(get_required_var('SUT_IP'), 22, 20));
-            save_screenshot;
-            #switch to ssh console
-            use_ssh_serial_console;
-            save_screenshot;
-            #start second stage upgrade
-            enter_cmd("DISPLAY= yast.ssh");
-            save_screenshot;
-            #wait for second stage upgrade completion
-            assert_screen('yast2-second-stage-done', 300);
-            #leave ssh console and switch to sol console
-            switch_from_ssh_to_sol_console(reset_console_flag => 'on');
-            save_screenshot;
-            send_key 'ret';
-            save_screenshot;
-        }
-        #setup vars
-        set_var("reboot_for_upgrade_step", undef);
-        set_var("first_reboot_after_upgrade", "yes");
-        set_var("after_upgrade", "yes");
-    }
+#    if (check_var('PERF_KERNEL', '1') or check_var('CPU_BUGS', '1') or check_var('VT_PERF', '1')) {
+#        if (get_var("XEN") && check_var('CPU_BUGS', '1')) {
+#            assert_screen([qw(pxe-qa-net-mitigation qa-net-selection)], 90);
+#            send_key 'ret';
+#            assert_screen([qw(grub2 grub1)], 60);
+#            send_key 'up';
+#        }
+#        else {
+#            send_key_until_needlematch(['linux-login', 'virttest-displaymanager'], 'ret', $counter, $timeout);
+#            #use console based on ssh to avoid unstable ipmi
+#            save_screenshot;
+#            use_ssh_serial_console;
+#            return;
+#        }
+#    }
+#
+#    if (!check_screen([qw(grub2 grub1 prague-pxe-menu)], 210)) {
+#        ipmitool("chassis power reset");
+#        reset_consoles;
+#        select_console 'sol', await_console => 0;
+#        check_screen([qw(grub2 grub1 prague-pxe-menu)], 90);
+#    }
+#
+#    # If a PXE menu will appear just select the default option (and save us the time)
+#    if (match_has_tag('prague-pxe-menu')) {
+#        send_key 'ret';
+#
+#        check_screen([qw(grub2 grub1)], 60);
+#    }
+#
+#    if (!get_var("reboot_for_upgrade_step")) {
+#        set_var("first_reboot_after_upgrade", "no") if (check_var("first_reboot_after_upgrade", "yes"));
+#        if (is_xen_host) {
+#            #send key 'up' to stop grub timer counting down, to be more robust to select xen
+#            send_key 'up';
+#            save_screenshot;
+#
+#            for (1 .. 20) {
+#                if ($_ == 10) {
+#                    reset_consoles;
+#                    select_console 'sol', await_console => 0;
+#                }
+#                send_key 'down';
+#                last if check_screen 'virttest-bootmenu-xen-kernel', 5;
+#            }
+#        }
+#    }
+#    else {
+#        save_screenshot;
+#        #offline upgrade requires upgrading offline during reboot while online doesn't
+#        if (check_var('offline_upgrade', 'yes')) {
+#            #boot to upgrade menuentry
+#            send_key 'down';
+#            send_key 'ret';
+#            #wait sshd up
+#            die "Can not connect to machine to perform offline upgrade via ssh" unless (check_port_state(get_required_var('SUT_IP'), 22, 10));
+#            save_screenshot;
+#            #switch to ssh console
+#            use_ssh_serial_console;
+#            save_screenshot;
+#            #start upgrade
+#            enter_cmd("DISPLAY= yast.ssh");
+#            save_screenshot;
+#            #wait upgrade finish
+#            assert_screen('rebootnow', 2700);
+#            save_screenshot;
+#            send_key 'ret';
+#            #leave ssh console and switch to sol console
+#            switch_from_ssh_to_sol_console(reset_console_flag => 'on');
+#            save_screenshot;
+#            send_key 'ret';
+#            #wait grub2 boot menu after first stage upgrade
+#            assert_screen('grub2', 300);
+#            #wait sshd up after first stage upgrade
+#            die "Can not connect to machine to perform offline upgrade second stage via ssh" unless (check_port_state(get_required_var('SUT_IP'), 22, 20));
+#            save_screenshot;
+#            #switch to ssh console
+#            use_ssh_serial_console;
+#            save_screenshot;
+#            #start second stage upgrade
+#            enter_cmd("DISPLAY= yast.ssh");
+#            save_screenshot;
+#            #wait for second stage upgrade completion
+#            assert_screen('yast2-second-stage-done', 300);
+#            #leave ssh console and switch to sol console
+#            switch_from_ssh_to_sol_console(reset_console_flag => 'on');
+#            save_screenshot;
+#            send_key 'ret';
+#            save_screenshot;
+#        }
+#        #setup vars
+#        set_var("reboot_for_upgrade_step", undef);
+#        set_var("first_reboot_after_upgrade", "yes");
+#        set_var("after_upgrade", "yes");
+#    }
     save_screenshot;
     send_key 'ret';
 
@@ -189,7 +189,13 @@ sub login_to_console {
 
 sub run {
     my $self = shift;
-    $self->login_to_console;
+
+    reset_consoles;
+    use_ssh_serial_console;
+    my $cmd = "ip a | grep 'inet ' |grep -vE '127.0.0|192.168' | grep -Po '(\\d+\\.){3}\\d+' | head -1";
+    script_output($cmd);
+    save_screenshot;
+    #$self->login_to_console;
 }
 
 sub post_fail_hook {

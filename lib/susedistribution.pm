@@ -504,6 +504,7 @@ sub init_consoles {
                 password => $testapi::password,
                 username => 'root',
                 serial => 'rm -f /dev/sshserial; mkfifo /dev/sshserial; chmod 666 /dev/sshserial; while true; do cat /dev/sshserial; done',
+                #serial => 'while true; do cat /dev/sshserial; done',
                 gui => 1
             });
     }

@@ -44,15 +44,28 @@ sub check_guest_ip {
 
     # ensure guest is still alive
     if (script_output("virsh domstate $guest") eq "running") {
-        script_run "sed -i '/ $guest /d' /etc/hosts";
-        my $mac_guest = script_output("virsh domiflist $guest | grep $net | grep -oE \"[[:xdigit:]]{2}(:[[:xdigit:]]{2}){5}\"");
-        my $syslog_cmd = "journalctl --no-pager | grep DHCPACK";
-        script_retry "$syslog_cmd | grep $mac_guest | grep -oE \"([0-9]{1,3}[\.]){3}[0-9]{1,3}\"", delay => 90, retry => 9, timeout => 90;
-        my $gi_guest = script_output("$syslog_cmd | grep $mac_guest | tail -1 | grep -oE \"([0-9]{1,3}[\.]){3}[0-9]{1,3}\"");
+        #script_run "sed -i '/ $guest /d' /etc/hosts";
+        script_run "sed -i '/ $guest/d' /etc/hosts";
+        #TODO update below section for alp
+#        my $mac_guest = script_output("virsh domiflist $guest | grep $net | grep -oE \"[[:xdigit:]]{2}(:[[:xdigit:]]{2}){5}\"");
+#        my $syslog_cmd = "journalctl --no-pager | grep DHCPACK";
+#        script_retry "$syslog_cmd | grep $mac_guest | grep -oE \"([0-9]{1,3}[\.]){3}[0-9]{1,3}\"", delay => 90, retry => 9, timeout => 90;
+#        my $gi_guest = script_output("$syslog_cmd | grep $mac_guest | tail -1 | grep -oE \"([0-9]{1,3}[\.]){3}[0-9]{1,3}\"");
+        my $gi_guest = get_guest_ip_from_virt_net($guest, $net);
         assert_script_run "echo '$gi_guest $guest # virtualization' >> /etc/hosts";
         script_retry("nmap $guest -PN -p ssh | grep open", delay => 30, retry => 6, timeout => 60) if ($guest =~ m/sles-11/i);
         die "Ping $guest failed !" if (script_retry("ping -c5 $guest", delay => 30, retry => 6, timeout => 60) ne 0);
     }
+}
+
+sub get_guest_ip_from_virt_net {
+    my ($guest, $net) = @_;
+
+    my $cmd = "virsh net-dhcp-leases $net | sed  '1,2d' | grep '$guest'";
+    script_retry($cmd, delay =>3, retry =>20);
+    $cmd = "virsh net-dhcp-leases $net | sed  '1,2d' | sed -n '/$guest/p' | gawk '{print \$5 }' | sed -r 's/\\\/[0-9]+//'";
+    return script_output($cmd);
+
 }
 
 sub check_guest_module {
@@ -76,11 +89,16 @@ sub save_guest_ip {
     # If we don't know guest's address or the address is wrong so the guest is not responding to ICMP
     if (script_run("grep $guest /etc/hosts") != 0 || script_retry("ping -c3 $guest", delay => 6, retry => 30, die => 0) != 0) {
         script_run "sed -i '/ $guest /d' /etc/hosts";
-        assert_script_run "virsh domiflist $guest";
-        my $mac_guest = script_output("virsh domiflist $guest | grep $name | grep -oE \"[[:xdigit:]]{2}(:[[:xdigit:]]{2}){5}\"");
-        my $syslog_cmd = is_sle('=11-sp4') ? 'grep DHCPACK /var/log/messages' : 'journalctl --no-pager | grep DHCPACK';
-        script_retry "$syslog_cmd | grep $mac_guest | grep -oE \"([0-9]{1,3}[\.]){3}[0-9]{1,3}\"", delay => 90, retry => 9, timeout => 90;
-        my $gi_guest = script_output("$syslog_cmd | grep $mac_guest | tail -1 | grep -oE \"([0-9]{1,3}[\.]){3}[0-9]{1,3}\"");
+
+        #TODO: add way to query guest ip via `virsh net-dhcp-leases `
+#        assert_script_run "virsh domiflist $guest";
+#        my $mac_guest = script_output("virsh domiflist $guest | grep $name | grep -oE \"[[:xdigit:]]{2}(:[[:xdigit:]]{2}){5}\"");
+#        my $syslog_cmd = is_sle('=11-sp4') ? 'grep DHCPACK /var/log/messages' : 'journalctl --no-pager | grep DHCPACK';
+#        script_retry "$syslog_cmd | grep $mac_guest | grep -oE \"([0-9]{1,3}[\.]){3}[0-9]{1,3}\"", delay => 90, retry => 9, timeout => 90;
+#        my $gi_guest = script_output("$syslog_cmd | grep $mac_guest | tail -1 | grep -oE \"([0-9]{1,3}[\.]){3}[0-9]{1,3}\"");
+        #TODO END
+
+        my $gi_guest = get_guest_ip_from_virt_net($guest, $name);
         assert_script_run "echo '$gi_guest $guest # virtualization' >> /etc/hosts";
         script_retry("nmap $guest -PN -p ssh | grep open", delay => 30, retry => 6, timeout => 60) if ($guest =~ m/sles-11/i);
         die "Ping $guest failed !" if (script_retry("ping -c5 $guest", delay => 30, retry => 6, timeout => 60) ne 0);
@@ -96,7 +114,8 @@ sub test_network_interface {
     my $routed = $args{routed} // 0;
     my $target = $args{target} // script_output("dig +short openqa.suse.de");
 
-    check_guest_ip("$guest") if (is_sle('>15') && ($isolated == 1) && get_var('VIRT_AUTOTEST'));
+    #check_guest_ip("$guest") if (is_sle('>15') && ($isolated == 1) && get_var('VIRT_AUTOTEST'));
+    check_guest_ip("$guest", net => $net) if (is_sle('>15') && ($isolated == 1) && get_var('VIRT_AUTOTEST'));
 
     save_guest_ip("$guest", name => $net);
 
@@ -160,6 +179,7 @@ sub download_network_cfg {
     script_output($download_cfg_script, $wait_script, type_command => 0, proceed_on_failure => 0);
 }
 
+# TODO: setup bridge does not work for alp container test
 sub prepare_network {
     #Confirm the host bridge configuration file
     my ($virt_host_bridge, $based_guest_dir) = @_;
@@ -276,6 +296,7 @@ sub enable_libvirt_log {
     restart_libvirtd;
 }
 
+#TODO: setup debug log for alp
 sub upload_debug_log {
     script_run("dmesg > /tmp/dmesg.log");
     virt_autotest_base::upload_virt_logs("/tmp/dmesg.log /var/log/libvirt /var/log/messages", "libvirt-virtual-network-debug-logs");

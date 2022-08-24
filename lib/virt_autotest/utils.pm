@@ -38,6 +38,7 @@ sub trim {
     return $text;
 }
 
+#TODO: ADD alp way
 sub restart_libvirtd {
     is_sle '12+' ? systemctl "restart libvirtd", timeout => 180 : assert_script_run "service libvirtd restart", 180;
 }

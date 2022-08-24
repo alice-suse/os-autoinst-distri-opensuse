@@ -198,7 +198,8 @@ sub junit_log_provision {
         $_guest_installations_results->{$_}{stop_run} = ($guest_instances{$_}->{stop_run} eq '' ? time() : $guest_instances{$_}->{stop_run});
         $_guest_installations_results->{$_}{test_time} = strftime("\%Hh\%Mm\%Ss", gmtime($_guest_installations_results->{$_}{stop_run} - $_guest_installations_results->{$_}{start_run}));
     }
-    $self->{"product_tested_on"} = script_output("cat /etc/issue | grep -io -e \"SUSE.*\$(arch))\" -e \"openSUSE.*[0-9]\"");
+    # below command has problem because /etc/issue is not available in alp vt container
+    #$self->{"product_tested_on"} = script_output("cat /etc/issue | grep -io -e \"SUSE.*\$(arch))\" -e \"openSUSE.*[0-9]\"");
     $self->{"product_name"} = ref($self);
     $self->{"package_name"} = ref($self);
     my $_guest_installation_xml_results = virt_autotest_base::generateXML($self, $_guest_installations_results);
@@ -262,6 +263,7 @@ sub post_fail_hook {
     my $self = shift;
 
     $self->reveal_myself;
+    #TODO: for alp, should not directly use root-ssh console, but go into container. Or maybe the logs should be put onto a volume shared from host to survive container crash/hang?
     $self->check_root_ssh_console;
     $self->junit_log_provision((caller(0))[3]);
     $self->SUPER::post_fail_hook;

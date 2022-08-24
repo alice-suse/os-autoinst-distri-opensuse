@@ -39,7 +39,10 @@ sub run_test {
     my ($ACTIVE_POOL_NAME, $AVAILABLE_POOL_SIZE) = virt_autotest::virtual_network_utils::get_active_pool_and_available_space();
     record_info('Detect Active POOL NAME:', $ACTIVE_POOL_NAME);
     record_info('Detect Available POOL SIZE:', $AVAILABLE_POOL_SIZE . 'GiB');
-    my $expected_pool_size = get_var('VIRT_EXPECTED_POOLSIZE', (is_xen_host) ? '40' : '20');
+
+    #TODO: ensure the host directory to be mounted into vt container as /var/lib/libvirt/images is large enough , eg >100G
+    #my $expected_pool_size = get_var('VIRT_EXPECTED_POOLSIZE', (is_xen_host) ? '40' : '20');
+    my $expected_pool_size = get_var('VIRT_EXPECTED_POOLSIZE', (is_xen_host) ? '40' : '12');
     assert_script_run("test $AVAILABLE_POOL_SIZE -ge $expected_pool_size",
         fail_message => "The SUT needs at least " . $expected_pool_size . "GiB available space of active pool for virtual network test");
 
@@ -48,7 +51,7 @@ sub run_test {
     virt_autotest::virtual_network_utils::restore_standalone() if (is_sle('=11-sp4'));
 
     #Enable libvirt debug log
-    virt_autotest::virtual_network_utils::enable_libvirt_log();
+    #virt_autotest::virtual_network_utils::enable_libvirt_log();
 
     #VM HOST SSH SETUP
     virt_autotest::utils::ssh_setup();
@@ -76,6 +79,7 @@ sub run_test {
         #for TW kvm guest, they are enp1s0, enp2s0, enp3s0, ...
         my $primary_nic = script_output("ssh root\@$guest \"ip a|awk -F': ' '/state UP/ {print \\\$2}'|head -n1\"");
         $primary_nic =~ /([a-zA-Z]*)(\d)(\w*)/;
+        #for (my $i = 1; $i <= 6; $i++) {
         for (my $i = 1; $i <= 6; $i++) {
             my $nic = $1 . (int($2) + $i) . $3;
             assert_script_run("ssh root\@$guest 'cp /etc/sysconfig/network/ifcfg-$primary_nic /etc/sysconfig/network/ifcfg-$nic'");
@@ -99,6 +103,7 @@ sub run_test {
     #virt_autotest::virtual_network_utils::restart_network();
 }
 
+#TODO: updat this for alp
 sub post_fail_hook {
     my ($self) = @_;
 

@@ -85,11 +85,12 @@ our %guest_params = (
     'guest_storage_label' => '',    #This indicates whether guest disk uses gpt or mbr in unattended installation file, not virt-install argument
     'guest_storage_size' => '',    #virt-install --disk path=[guest_storage_path],size=[guest_storage_size],format=[guest_storage_format],[guest_storage_others]
     'guest_storage_others' => '',  #virt-install --disk path=[guest_storage_path],size=[guest_storage_size],format=[guest_storage_format],[guest_storage_others]
-    'guest_network_type' => '',    #This indicates whether guest uses bridge, nat or other network types, not virt-install argument
+    'guest_network_type' => '',    #This indicates whether guest uses bridge, nat, virtual_network, or other network types, not virt-install argument
     'guest_network_device' => '',    #virt-install --network=bridge=[guest_network_device],mac=[guest_macaddr] (Also can be used with other network type)
     'guest_network_others' => '',    #virt-install --netowrk=bridge=[guest_network_device],mac=[guest_macaddr],[guest_network_others]
                                      #(Also can be used with other network type)
     'guest_macaddr' => '',    #virt-install --network=bridge=[guest_network_device],mac=[guest_macaddr] (Also can be used with other network type)
+    'guest_virtual_network' => '',    # virt-install --network=network=[guest_virtual_network],mac=[guest_macaddr],[guest_network_others]
     'guest_netaddr' => '', #This indicates the subnet to which guest will be connected. It takes the form ip_address/subnet_mask_length and defaults to 192.168.123.255/24,
         #not virt-install argument. If 'host-default' is given, this indicates guest will use host network and host bridge device that already exists
         #and are connected directly to default gateway, for example, br0. If br0 or any other host bridge devices already conneced to host network that
@@ -782,13 +783,19 @@ sub config_guest_storage {
     return $self;
 }
 
-#Configure [guest_network_selection_options].User can still change [guest_macaddr],[guest_network_type],[guest_network_device],[guest_ipaddr_static],[guest_ipaddr] and
-#[guest_netaddr] by passing non-empty arguments using hash.Set [guest_network_device] to br0 if it is not given and guest chooses to use host network.Set [guest_network_device]
-#to br123 and [guest_netaddr] to 192.168.123.255/24 if they are not given and guest does not choose to use host network.After enusre [guest_network_device] and [guest_netaddr]
-#have non-empty values, reset [guest_network_device] to already active host bridge device connected to host network if user chooses to use host network or intends to use a new
-#non-existed bridge deivce which is only created and configured to connect to host network if host does not have a active bridge device.Calls config_guest_macaddr to generate
-#guest mac address if it has not been set.Calls config_guest_network_bridge to create [guest_network_device] in subnet [guest_netaddr].Turn off firewall/apparmor,loosen iptables
-#rules and enable forwarding by calling config_guest_network_bridge_policy.
+#Configure [guest_network_selection_options].User can still change [guest_macaddr],[guest_network_type],[guest_network_device],[guest_ipaddr_static],[guest_ipaddr],[guest_netaddr],and [guest_virtual_network] by passing non-empty arguments using hash.
+#If [guest_network_type] is `bridge`, 
+#    Set [guest_network_device] to br0 if it is not given and guest chooses to use host network.Set [guest_network_device]
+#    to br123 and [guest_netaddr] to 192.168.123.255/24 if they are not given and guest does not choose to use host network.After enusre [guest_network_device] and [guest_netaddr]
+#    have non-empty values, reset [guest_network_device] to already active host bridge device connected to host network if user chooses to use host network or intends to use a new
+#    non-existed bridge deivce which is only created and configured to connect to host network if host does not have a active bridge device.Calls config_guest_macaddr to generate
+#    guest mac address if it has not been set.Calls config_guest_network_bridge to create [guest_network_device] in subnet [guest_netaddr].Turn off firewall/apparmor,loosen iptables
+#    rules and enable forwarding by calling config_guest_network_bridge_policy.
+#
+#If [guest_network_type] is `virtual_network`,
+#    the [guest_virtual_network] should be created on host by users 
+#    before calling this guest installation automation.
+#    It supports "--network=network=[guest_virtual_network],mac=[guest_macaddr],[guest_network_others]".
 sub config_guest_network_selection {
     my $self = shift;
 
@@ -833,8 +840,16 @@ sub config_guest_network_selection {
         $self->config_guest_network_bridge($self->{guest_network_device}, $self->{guest_netaddr}, $self->{guest_domain_name});
         $self->config_guest_network_bridge_policy($self->{guest_network_device});
         $self->{guest_network_selection_options} = "--network=bridge=$self->{guest_network_device},mac=$self->{guest_macaddr}";
-        $self->{guest_network_selection_options} .= ",$self->{guest_network_others}" if ($self->{guest_network_others} ne '');
     }
+    elsif ($self->{guest_network_type} eq 'virtual_network') {
+	record_info("Guest $self->{guest_name} has been configured to use virtual network $self->{guest_virtual_network}.", "Please ensure its existence on host(no virtual network setup in guest installation code)!");
+	$self->{guest_network_selection_options} = "--network=network=$self->{guest_virtual_network}";
+	$self->{guest_network_selection_options} .= ",mac=$self->{guest_macaddr}" if ($self->{guest_macaddr} ne '');
+	$self->{guest_netaddr_attached} = $self->{guest_netaddr}; 
+    }
+
+    $self->{guest_network_selection_options} .= ",$self->{guest_network_others}" if ($self->{guest_network_others} ne '');
+
     return $self;
 }
 

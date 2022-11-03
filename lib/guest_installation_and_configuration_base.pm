@@ -416,7 +416,8 @@ sub clean_up_all_guests {
             script_run("virsh undefine $_ --nvram") if (script_run("virsh undefine $_") ne 0);
             script_run("rm -f -r $self->{guest_storage_path}") if ($self->{guest_storage_path} ne '');
         }
-        script_run("rm -f -r /var/lib/libvirt/images/*");
+        # With `import` installation method supported, storage root path shoud not be cleaned 
+        #script_run("rm -f -r /var/lib/libvirt/images/*");
     }
     else {
         diag("No guests reside on this host $self->{host_name}");

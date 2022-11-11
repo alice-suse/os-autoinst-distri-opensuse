@@ -344,4 +344,42 @@ sub clean_all_virt_networks {
     record_info("All existing virtual networks: \n$_virt_networks \nhave been destroy and undefined.", script_output("ip a"));
 }
 
+sub setup_vm_simple_dns_with_vnet_ip {
+    my ($_vnet, $_vms) = @_;
+
+    record_info("Going to setup simple DNS in /etc/hosts for vms $_vms, with virtual network `$_vnet` net-dhcp-leases...");
+    
+    my $_dns_file = "/etc/hosts";
+    my $_cmd = '';
+    assert_script_run("virsh net-dhcp-leases $_vnet");
+    save_screenshot;
+
+    if ($_vms eq '') {
+        # Setup all vms
+        assert_script_run("sed -i '1,\$d' $_dns_file");
+        $_cmd = "echo \`virsh net-dhcp-leases $_vnet | sed  '1,2d' | gawk '{print \$5,\$6}' | sed -r 's/\\\/[0-9]+//'\` >> $_dns_file";
+        assert_script_run($_cmd);
+    } else {
+        # Setup given vms
+        foreach my $_vm (split(',', $_vms)) {
+            script_run "sed -i '/ $_vm /d' $_dns_file";
+            my $cmd = "echo \`virsh net-dhcp-leases $_vnet | sed  '1,2d' | grep \"$_vm\" | gawk '{print \$5,\$6}' | sed -r 's/\\\/[0-9]+//'\` >> $_dns_file";
+            assert_script_run($cmd);
+        }
+    }
+    assert_script_run("cat $_dns_file");
+    save_screenshot;
+    record_info("Simple DNS setup in /etc/hosts, with virtual network `$_vnet` net-dhcp-leases is successful!");
+}
+
+sub setup_vm_simple_dns_with_ip {
+    my ($_vm, $_ip) = @_;
+
+    script_run "sed -i '/ $_vm /d' /etc/hosts";
+    assert_script_run "echo '$_ip $_vm' >> /etc/hosts";
+    assert_script_run "cat /etc/hosts";
+    save_screenshot;
+    record_info("Simple DNS setup in /etc/hosts for $_ip $_vm is successful!");
+}
+
 1;

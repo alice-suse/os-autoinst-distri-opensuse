@@ -35,6 +35,7 @@ use testapi;
 use utils;
 use virt_utils;
 use virt_autotest::utils;
+use virt_autotest::virtual_network_utils;
 use version_utils;
 use Utils::Systemd;
 use mm_network;
@@ -95,12 +96,14 @@ our %guest_params = (
         #not virt-install argument. If 'host-default' is given, this indicates guest will use host network and host bridge device that already exists
         #and are connected directly to default gateway, for example, br0. If br0 or any other host bridge devices already conneced to host network that
         #do not exist, [guest_network_device] wil be configured to connect to host network and used for guest configuration.
+        #If [guest_virtual_network] is configured, please ensure [guest_netaddr] matches the subnet of this virtual network.
     'guest_ipaddr' => '',    #virt-install --extra-args "ip=[guest_ipaddr]" if it is a static ip address, otherwise it is not virt-install argument.
                              #It stores the final guest ip address obtained from ip discovery
     'guest_ipaddr_static' => '',    #This indicates whether guest uses static ip address(true or false), not virt-install argument
     'guest_graphics' => '',    #virt-install --graphics [guest_graphics]
     'guest_controller' => '',  # virt-install --controller [guest_controller].More than one controller can be passed to guest, they should be separated by hash.
                                # For example, "controller1#controller2#controller3" which will be splitted later and passed to individual --controller argument.
+    'guest_sysinfo' => '',    #virt-install --sysinfo [guest_sysinfo]
     'guest_input' => '',    #TODO            #virt-install --input [guest_input]
     'guest_serial' => '',    #virt-install --serial [guest_serial]
     'guest_parallel' => '',    #TODO            #virt-install --parallel [guest_parallel]
@@ -132,7 +135,6 @@ our %guest_params = (
     'guest_power_management' => '',    #virt-install --pm [guest_power_management]
     'guest_events' => '',    #virt-install --events [guest_events]
     'guest_resource' => '',    #TODO            #virt-install --resource [guest_resource]
-    'guest_sysinfo' => '',    #TODO            #virt-install --sysinfo [guest_sysinfo]
     'guest_qemu_command' => '',    #virt-install --qemu-commandline [guest_qemu_command]
     'guest_launchsecurity' => '',    # virt-install --launchSecurity [guest_launchsecurity]
     'guest_autostart' => '',    #TODO            #virt-install --[guest_autostart(autostart or empty)]
@@ -185,7 +187,9 @@ our %guest_params = (
     'guest_os_variant_options' => '',    #[guest_os_variant_options] = "--os-variant [guest_os_variant]"
     'guest_storage_options' => '',    #[guest_storage_options] = "--disk path=[guest_storage_path],size=[guest_storage_size],
                                       #format=[guest_storage_format],[guest_storage_others]"
-    'guest_network_selection_options' => '',    #[guest_network_selection_options] = "--network=bridge=[guest_network_device],mac=[guest_macaddr]"
+    'guest_network_selection_options' => '',    #[guest_network_selection_options] = "--network=bridge=[guest_network_device],mac=[guest_macaddr]", 
+                                                #or "--network=network=[guest_virtual_network],mac=[guest_macaddr],[guest_network_others]"
+    'guest_sysinfo_options' => '',    #[guest_sysinfo_options] = "--sysinfo [guest_sysinfo]"
     'guest_graphics_and_video_options' => '',    #[guest_graphics_and_video_options] = "--video [guest_video] --graphics [guest_graphics]"
     'guest_serial_options' => '',    #[guest_serial_options] = "--serial [guest_serial]"
     'guest_console_options' => '',    #[guest_console_options] = "--console [guest_console]"
@@ -364,7 +368,7 @@ sub prepare_common_environment {
         disable_and_stop_service('named.service', ignore_failure => 1);
         script_run("rm -f -r $common_log_folder");
         assert_script_run("mkdir -p $common_log_folder");
-        my @stuff_to_backup = ('/root/.ssh/config', '/etc/ssh/ssh_config');
+        my @stuff_to_backup = ('/root/.ssh/config', '/etc/ssh/ssh_config','/etc/hosts');
         virt_autotest::utils::backup_file(\@stuff_to_backup);
         script_run("rm -f -r /root/.ssh/config");
         virt_autotest::utils::setup_common_ssh_config('/root/.ssh/config');
@@ -403,7 +407,7 @@ sub prepare_non_transactional_environment {
     return $self;
 }
 
-#Remove all existing guests and storage files in /var/lib/libvirt/images/
+#Remove all existing guests and affecting storage files
 sub clean_up_all_guests {
     my $self = shift;
 
@@ -414,10 +418,16 @@ sub clean_up_all_guests {
         foreach (@_guests_to_clean_up) {
             script_run("virsh destroy $_");
             script_run("virsh undefine $_ --nvram") if (script_run("virsh undefine $_") ne 0);
-            script_run("rm -f -r $self->{guest_storage_path}") if ($self->{guest_storage_path} ne '');
         }
-        # With `import` installation method supported, storage root path shoud not be cleaned 
-        #script_run("rm -f -r /var/lib/libvirt/images/*");
+        save_screenshot;
+        # With `import` installation method supported, 
+        # storage root path shoud not be cleaned, but to delete potential affecting storage files 
+        foreach my $_vm (split(/,/, get_required_var('UNIFIED_GUEST_LIST'))) {
+            script_run("rm -f -r /var/lib/libvirt/images/${_vm}.*");
+            script_run("rm -f -r $self->{guest_storage_path}/${_vm}.*") if ($self->{guest_storage_path} ne '');
+        }
+        save_screenshot;
+        record_info("Cleaned all existing vms and affecting disk files.");
     }
     else {
         diag("No guests reside on this host $self->{host_name}");
@@ -843,10 +853,10 @@ sub config_guest_network_selection {
         $self->{guest_network_selection_options} = "--network=bridge=$self->{guest_network_device},mac=$self->{guest_macaddr}";
     }
     elsif ($self->{guest_network_type} eq 'virtual_network') {
-	record_info("Guest $self->{guest_name} has been configured to use virtual network $self->{guest_virtual_network}.", "Please ensure its existence on host(no virtual network setup in guest installation code)!");
-	$self->{guest_network_selection_options} = "--network=network=$self->{guest_virtual_network}";
-	$self->{guest_network_selection_options} .= ",mac=$self->{guest_macaddr}" if ($self->{guest_macaddr} ne '');
-	$self->{guest_netaddr_attached} = $self->{guest_netaddr}; 
+    	record_info("Guest $self->{guest_name} has been configured to use virtual network $self->{guest_virtual_network}.", "Please ensure its existence on host(no virtual network setup in guest installation code)!");
+    	$self->{guest_network_selection_options} = "--network=network=$self->{guest_virtual_network}";
+    	$self->{guest_network_selection_options} .= ",mac=$self->{guest_macaddr}" if ($self->{guest_macaddr} ne '');
+    	$self->{guest_netaddr_attached} = [$self->{guest_netaddr}]; 
     }
 
     $self->{guest_network_selection_options} .= ",$self->{guest_network_others}" if ($self->{guest_network_others} ne '');
@@ -1371,9 +1381,15 @@ sub config_guest_installation_method {
     if ($self->{guest_installation_method} eq 'location') {
         $self->config_guest_installation_media;
         $self->{guest_installation_method_options} = "--location $self->{guest_installation_media}";
+    } elsif ($self->{guest_installation_method} eq 'import') {
+        $self->{guest_installation_method_options} = "--import ";
     }
-    $self->{guest_installation_method_options} = $self->{guest_installation_method_options} . ($self->{guest_installation_method_others} ne '' ? ",$self->{guest_installation_method_others}" : '') if ($self->{guest_installation_method_others} ne '');
-    $self->{guest_installation_method_options} = $self->{guest_installation_method_options} . ($self->{guest_installation_fine_grained} ne '' ? " --install $self->{guest_installation_fine_grained}" : '') if ($self->{guest_installation_fine_grained} ne '');
+
+    unless ($self->{guest_installation_method} eq 'import') {
+        $self->{guest_installation_method_options} = $self->{guest_installation_method_options} . ($self->{guest_installation_method_others} ne '' ? ",$self->{guest_installation_method_others}" : '') if ($self->{guest_installation_method_others} ne '');
+        $self->{guest_installation_method_options} = $self->{guest_installation_method_options} . ($self->{guest_installation_fine_grained} ne '' ? " --install $self->{guest_installation_fine_grained}" : '') if ($self->{guest_installation_fine_grained} ne '');
+    }
+
     $self->{guest_installation_method_options} = $self->{guest_installation_method_options} . " --autoconsole $self->{guest_autoconsole}" if ($self->{guest_autoconsole} ne '');
     $self->{guest_installation_method_options} = $self->{guest_installation_method_options} . " --noautoconsole" if ($self->{guest_noautoconsole} eq 'true');
     return $self;
@@ -1607,6 +1623,20 @@ sub config_guest_installation_automation_registration {
     return $self;
 }
 
+# Configure guest sysinfo
+sub config_guest_sysinfo {
+    my $self = shift;
+
+    $self->reveal_myself;
+    $self->config_guest_params(@_) if (scalar(@_) gt 0);
+
+	if ($self->{guest_sysinfo} ne '') {
+		$self->{guest_sysinfo_options} .= " --sysinfo $self->{guest_sysinfo} ";
+		record_info("Guest $self->{guest_name} has been set sysinfo.");
+	}
+	return $self;
+}
+
 #Validate autoyast file using xmllint and yast2-schema.This is only for reference purpose if guest and host oses have different release major version.
 #Output kickstart file content directly because its content can not be validated on SLES or opensuse host by using ksvalidator.
 sub validate_guest_installation_automation_file {
@@ -1669,6 +1699,7 @@ sub prepare_guest_installation {
     $self->config_guest_network_selection;
     $self->config_guest_installation_method;
     $self->config_guest_installation_extra_args;
+    $self->config_guest_sysinfo;
     return $self;
 }
 
@@ -1685,6 +1716,7 @@ sub start_guest_installation {
       . "$self->{guest_vcpus_options} $self->{guest_memory_options} $self->{guest_cpumodel_options} $self->{guest_metadata_options} "
       . "$self->{guest_os_variant_options} $self->{guest_boot_options} $self->{guest_storage_options} $self->{guest_network_selection_options} "
       . "$self->{guest_installation_method_options} $self->{guest_installation_extra_args_options} $self->{guest_graphics_and_video_options} "
+      . "$self->{guest_sysinfo_options} "
       . "$self->{guest_serial_options} $self->{guest_console_options} $self->{guest_features_options} $self->{guest_events_options} "
       . "$self->{guest_power_management_options} $self->{guest_qemu_command_options} $self->{guest_xpath_options} $self->{guest_security_options} "
       . "$self->{guest_controller_options} $self->{guest_rng_options} --debug";
@@ -1846,6 +1878,14 @@ sub check_guest_installation_result_via_ssh {
     $self->get_guest_ipaddr if (($self->{guest_ipaddr_static} ne 'true') and (!($self->{guest_ipaddr} =~ /^\d+\.\d+\.\d+\.\d+$/im)));
     save_screenshot;
     if ($self->{guest_ipaddr} =~ /^\d+\.\d+\.\d+\.\d+$/im) {
+        if ($self->{guest_network_type} eq 'virtual_network') {
+            # Setup dns in /etc/hosts
+            virt_autotest::virtual_network_utils::setup_vm_simple_dns_with_ip($self->{guest_name}, $self->{guest_ipaddr});
+        }
+        if ($self->{guest_installation_method} eq 'import') {
+            # Setup password-less ssh login
+            virt_autotest::utils::ssh_copy_id($self->{guest_name}, default_ssh_key => '/root/.ssh/id_rsa');
+        }
         $_guest_transient_hostname = script_output("timeout --kill-after=3 --signal=9 30 ssh -vvv root\@$self->{guest_ipaddr} hostname", proceed_on_failure => 1);
         save_screenshot;
         if ($_guest_transient_hostname ne '') {

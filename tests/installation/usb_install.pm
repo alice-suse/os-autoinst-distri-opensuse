@@ -1,12 +1,15 @@
 # SUSE's openQA tests
 #
-# Copyright 2012-2019 SUSE LLC
+# Copyright 2023 SUSE LLC
 # SPDX-License-Identifier: FSFAP
 
-# Summary: Verify installation starts and is in progress
-# Maintainer: Michael Moese <mmoese@suse.de>
+# Summary: 
+# On a minimum system that is launched by ipxe and 
+# stops at sshd-server-started, dd installation iso to the first 
+# usb device, and launch the installation with usb.
+# Maintainer: Xiaoli Ai(Alice) <xlai@suse.com>, qe-virt@suse.de
 
-package ipxe_install;
+package usb_install;
 use base 'y2_installbase';
 use strict;
 use warnings;
@@ -16,15 +19,34 @@ use testapi;
 use bmwqemu;
 use ipmi_backend_utils;
 use version_utils qw(is_upgrade is_tumbleweed is_sle is_leap);
-use bootloader_setup 'prepare_disks';
 use Utils::Architectures;
-use virt_autotest::utils qw(is_kvm_host is_xen_host);
 
-use HTTP::Tiny;
-use IPC::Run;
 use Time::HiRes 'sleep';
 
+sub run {
+    #select_console 'sol', await_console => 0;
+    #assert_screen('sshd-server-started', 20);
+    select_console('root-ssh');
 
+    # find the usb 
+
+    # download dd the self-install iso to usb
+
+    # flush
+
+    # set next boot to usb
+
+    # power reset
+
+
+}
+
+sub post_fail_hook {
+    # ipmitool boot to disk
+    # super::post_fail_hook
+}
+1;
+------------------------------------------------------------
 sub poweroff_host {
     ipmitool("chassis power off");
     while (1) {

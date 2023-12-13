@@ -223,7 +223,10 @@ sub run {
     # when we don't use autoyast, we need to also load the right test modules to perform the remote installation
     if (get_var('AUTOYAST')) {
         # VIRT_AUTOTEST need not sleep and set_bootscript_hdd
-        return if get_var('VIRT_AUTOTEST');
+        if get_var('VIRT_AUTOTEST') {
+            set_disk_boot;
+            return;
+        }
         # HANA PERF uses DELL R840 and R740, their UEFI IPXE boot need not set_bootscript_hdd
         return if (get_var('HANA_PERF') && get_var('IPXE_UEFI'));
         # make sure to wait for a while befor changing the boot device again, in order to not change it too early
@@ -249,6 +252,7 @@ sub run {
 
         save_screenshot;
         set_bootscript_hdd if get_var('IPXE_UEFI');
+        set_disk_boot if get_var('VIRT_AUTOTEST');
 
         unless (get_var('HOST_INSTALL_AUTOYAST')) {
             select_console 'installation';

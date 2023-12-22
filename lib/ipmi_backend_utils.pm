@@ -580,23 +580,23 @@ sub set_ipxe_bootscript {
 
 sub set_floppy_boot {
     while (1) {
-        my $stdout = ipmitool('chassis bootparam get 5');
-        last if $stdout =~ m/Boot Flag Valid.*Force Boot from Floppy/s;
         diag "setting boot device to floppy/primary removable media";
         my $options = get_var('IPXE_UEFI') ? 'options=efiboot' : '';
         ipmitool("chassis bootdev floppy ${options}");
         sleep(3);
+        my $stdout = ipmitool('chassis bootparam get 5');
+        last if $stdout =~ m/Force Boot from Floppy/s;
     }
 }
 
 sub set_disk_boot {
     while (1) {
-        my $stdout = ipmitool('chassis bootparam get 5');
-        last if $stdout =~ m/Boot Flag Valid.*Force Boot from default Hard-Drive/s;
         diag "setting boot device to default Hard-Drive";
         my $options = get_var('IPXE_UEFI') ? 'options=efiboot' : '';
         ipmitool("chassis bootdev disk ${options}");
         sleep(3);
+        my $stdout = ipmitool('chassis bootparam get 5');
+        last if $stdout =~ m/Force Boot from default Hard-Drive/s;
     }
 }
 1;

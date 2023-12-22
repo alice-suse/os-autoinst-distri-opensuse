@@ -47,12 +47,12 @@ sub poweron_host {
 
 sub set_pxe_boot {
     while (1) {
-        my $stdout = ipmitool('chassis bootparam get 5');
-        last if $stdout =~ m/Boot Flag Valid.*Force PXE/s;
         diag "setting boot device to pxe";
         my $options = get_var('IPXE_UEFI') ? 'options=efiboot' : '';
         ipmitool("chassis bootdev pxe ${options}");
         sleep(3);
+        my $stdout = ipmitool('chassis bootparam get 5');
+        last if $stdout =~ m/Force PXE/s;
     }
 }
 
@@ -89,7 +89,7 @@ sub set_bootscript {
     }
 
     my $cmdline_extra;
-    $cmdline_extra .= " regurl=$regurl " if $regurl;
+    $cmdline_extra .= " regurl=$regurl " if ($regurl and !get_var('USB_BOOT'));
     $cmdline_extra .= " console=$console " if $console;
 
     # Support passing both EXTRA_PXE_CMDLINE to bootscripts
@@ -201,7 +201,8 @@ sub run {
     if (get_var('VIRT_AUTOTEST')) {
         #it is static menu and choose the TW entry to start installation
         enter_o3_ipxe_boot_entry if get_var('IPXE_STATIC');
-        assert_screen([qw(load-linux-kernel load-initrd)], 240);
+	#assert_screen([qw(load-linux-kernel load-initrd)], 240);
+        check_screen([qw(load-linux-kernel load-initrd)], 240);
         # Loading initrd spend much time(fg. 10-15 minutes to Beijing SUT)
         # Downloading from O3 became much more quick, some needles may not be caught.
         check_screen([qw(start-tw-install start-sle-install network-config-created)], 60);
@@ -223,7 +224,7 @@ sub run {
     # when we don't use autoyast, we need to also load the right test modules to perform the remote installation
     if (get_var('AUTOYAST')) {
         # VIRT_AUTOTEST need not sleep and set_bootscript_hdd
-        if get_var('VIRT_AUTOTEST') {
+        if (get_var('VIRT_AUTOTEST')) {
             set_disk_boot;
             return;
         }

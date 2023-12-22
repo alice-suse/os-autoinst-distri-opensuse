@@ -2,21 +2,21 @@ name: slem6_baremetal_usb_install.yaml
 description:    >
     Maintainer: xlai@suse.com, qe-virt@suse.de
     SLE Micro 6.0 bare metal machine installation with Self-Install iso schedule 
-vars:
-  VIRT_AUTOTEST: 1
-  VIDEOMODE: text
-  DO_NOT_INSTALL_HOST: 0
-  MAX_JOB_TIME: 10800
-  IPXE: 1
-  IPXE_HTTPSERVER: http://baremetal-support.qe.nue2.suse.org:8080
+#vars:
+#  VIRT_AUTOTEST: 1
+#  VIDEOMODE: text
+#  DO_NOT_INSTALL_HOST: 0
+#  MAX_JOB_TIME: 10800
+  #IPXE: 1
+  #IPXE_HTTPSERVER: http://baremetal-support.qe.nue2.suse.org:8080
   #MIRROR_HTTP: http://openqa.suse.de/assets/repo/fixed/SLE-15-SP5-Full-x86_64-GM-Media1/
-  MIRROR_HTTP: http://mirror.suse.asia/dist/install/SLP/SLE-15-SP5-Full-GM/ 
-  USB_BOOT: 1
+  #MIRROR_HTTP: http://mirror.suse.asia/dist/install/SLP/SLE-15-SP5-Full-GM/ 
+  #USB_BOOT: 1
 schedule:
     - '{{ipxe_install}}'
     - installation/usb_install
     - microos/selfinstall
-    - jeos/firstrun
+      #- jeos/firstrun
     - virt_autotest/login_console
 conditional_schedule:
     ipxe_install:

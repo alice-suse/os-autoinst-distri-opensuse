@@ -13,7 +13,7 @@
   "storage": {
     "files": [
       {
-        "path": "/etc/ssh/sshd_config",
+        "path": "/etc/sshd/sshd_config.d/root_login_config",
         "mode": 420,
         "overwrite": true,
         "contents": {

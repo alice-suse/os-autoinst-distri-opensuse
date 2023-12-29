@@ -6,7 +6,8 @@
 # Summary: 
 # On a minimum system that is launched by ipxe and 
 # stops at sshd-server-started, dd installation iso to the first 
-# usb device, and launch the installation with usb.
+# usb device, write ignition config to the other usb,
+# and launch the installation with the iso usb.
 # Maintainer: Xiaoli Ai(Alice) <xlai@suse.com>, qe-virt@suse.de
 
 package usb_install;
@@ -24,22 +25,38 @@ use LWP::Simple 'head';
 use Time::HiRes 'sleep';
 
 sub run {
-    #select_console 'sol', await_console => 0;
     assert_screen('sshd-server-started', 5);
     select_console('root-ssh');
     assert_script_run("set -o pipefail");
 
-    # find the first usb drive 
-    my $usb = script_output("ls /dev/disk/by-id/ -l | grep -i usb | grep -i -v -E \"generic|part\" | head -1 | sed 's#^.*\\\/##'");
+    # specify the two usb drives to use 
+    my @usb = split('\n', script_output("ls /dev/disk/by-id/ -l | grep -i usb | grep -i -v -E \"generic|part\" | sed 's#^.*\\\/##'"));
     record_info("Disk info on the machine:", script_output("ls /dev/disk/by-id/ -l; fdisk -l"));
-    die "No proper usb device!" unless $usb;
-    $usb = "/dev/$usb";
-    record_info("Going to use usb drive $usb to store ISO.");
+    die "No proper usb devices!" unless (@usb && scalar(@usb) == 2);
+    my $iso_usb = "/dev/$usb[0]";
+    my $ignition_usb = "/dev/$usb[1]";
+    record_info("Pick usb drive $iso_usb to store ISO and $ignition_usb to store ignition config.");
 
-    # download and dd the iso to usb
+    # write ignition config to one usb
+    assert_script_run("echo y | mkfs.ext4 $ignition_usb", 60);
+    assert_script_run("e2label $ignition_usb ignition");
+    assert_script_run("mkdir  -p /mnt");
+    assert_script_run("mount $ignition_usb /mnt");
+    my $cmd = "curl -L "
+      . data_url("virt_autotest/guest_unattended_installation_files/VIRT_TEST_VM_config.ign")
+      . " -o /mnt/ignition/config.ign";
+    script_retry($cmd, retry => 2, delay => 5, timeout => 60, die => 1);
+    save_screenshot;
+    assert_script_run("cat /mnt/ignition/config.ign");
+    save_screenshot;
+    assert_script_run("sync");
+    assert_script_run("umount -l /mnt");
+    record_info("Ignition file is successfully downloaded and written to usb $ignition_usb.");
+
+    # download and dd the iso to the other usb
     my $download_url = "http://" . get_var('OPENQA_URL', get_var('OPENQA_HOSTNAME')) . "/assets/iso/" . get_required_var('ISO');
     die "ISO URL is not accessible: $download_url." unless head($download_url);
-    my $cmd = "curl -L $download_url | dd of=$usb bs=1M";
+    my $cmd = "curl -L $download_url | dd of=$iso_usb bs=1M";
     script_retry($cmd, retry => 2, delay => 10, timeout => 600, die => 1);
     save_screenshot;
 #    my $checksum = script_output("sha256sum $usb" . ' |cut -d\' \' -f 1', 210);
@@ -51,27 +68,43 @@ sub run {
 
     # flush
     assert_script_run("sync");
+    record_info("ISO is saved successfully to usb $iso_usb.");
+
 
     # set next boot to usb
-    set_floppy_boot;
+    if (check_var('IPXE_UEFI', '1')) {
+	# some machines do not support setting floppy boot via ipmitool in uefi boot mode, 
+	# so we use efibootmgr instead
+	record_info('efibootmgr output after dd iso to usb:', script_output('efibootmgr'));
+	save_screenshot;
+	my $usb_boot = script_output('efibootmgr | grep usb -i | grep "\*"');
+	save_screenshot;
+	die "Only 1 bootable USB should be here. But we find in efibootmgr output: $usb_boot." if (!$usb_boot || $usb_boot =~ /\n/);
+	$usb_boot =~ /Boot([0-9A-F]+)\*/m;
+	my $usb_boot_num = $1;
+	assert_script_run("efibootmgr -n $usb_boot_num");
+	save_screenshot;
+	record_info('efibootmgr output after setting next boot to usb:', script_output('efibootmgr'));
+    } else {
+    	set_floppy_boot;
+    }
 
     # power reset
     ipmitool("chassis power reset");
 
-    select_console 'sol', await_console => 0;
-    assert_screen('send-key-t', 180);
-    send_key('t');
-    assert_screen('selfinstall-screen', 10);
+#    select_console 'sol', await_console => 0;
+#    assert_screen('press-t-for-boot-menu', 180);
+#    send_key('t');
 }
 
-sub post_fail_hook {
-    # ipmitool boot to disk
-    # super::post_fail_hook
-    my $self = shift;
-
-    # To not affect following jobs 
-    set_disk_boot;
-    #$self->SUPER::post_fail_hook;
-}
+#sub post_fail_hook {
+#    # ipmitool boot to disk
+#    # super::post_fail_hook
+#    my $self = shift;
+#
+#    # To not affect following jobs 
+#    set_disk_boot;
+#    #$self->SUPER::post_fail_hook;
+#}
 
 1;

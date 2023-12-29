@@ -94,7 +94,7 @@ sub set_bootscript {
 
     # Support passing both EXTRA_PXE_CMDLINE to bootscripts
     $cmdline_extra .= get_var('EXTRA_PXE_CMDLINE') . ' ' if get_var('EXTRA_PXE_CMDLINE');
-    $cmdline_extra .= " root=/dev/ram0 initrd=initrd textmode=1" if check_var('IPXE_UEFI', '1');
+    $cmdline_extra .= " root=/dev/ram0 initrd=initrd textmode=1" if (check_var('IPXE_UEFI', '1') and !get_var('USB_BOOT'));
 
     if ($autoyast ne '') {
         $cmdline_extra .= " autoyast=$autoyast sshd=1 sshpassword=$testapi::password ";
@@ -174,7 +174,6 @@ sub run {
 
     poweroff_host;
 
-    # virtualization tests use a static ipxe configuration file in O3
     # Note: 
     # SLE Micro 6.0 Self-Install image does not directly support pxe boot.
     # To install it on bare metal machine, firstly bring up a minimum system via ipxe
@@ -185,10 +184,15 @@ sub run {
     # And then boot from the USB, and finish installation with the Self-Install iso.
     # For more details, refer to poo#151498.
     # To achieve the first step, in testsuite settings,
+    # - set `IPXE_UEFI`: SLE Micro 6.0+ only officially support uefi boot
     # - set `USB_BOOT`: a flag to indicate this USB installation method, 
-    #             which stops further installation
+    #                   which stops further installation
     # - set `MIRROR_HTTP`: the repository to bring up a minimum system(eg sle15sp5 gm)
     # - do NOT set `AUTOYAST`
+
+    die "Can't set AUTOYAST for usb boot!" if (get_var('AUTOYAST', '') && get_var('USB_BOOT', ''));
+
+    # virtualization tests use a static ipxe configuration file in O3
     set_bootscript unless get_var('IPXE_STATIC');
 
     set_pxe_boot;
@@ -225,7 +229,7 @@ sub run {
     if (get_var('AUTOYAST')) {
         # VIRT_AUTOTEST need not sleep and set_bootscript_hdd
         if (get_var('VIRT_AUTOTEST')) {
-            set_disk_boot;
+	    #set_disk_boot;
             return;
         }
         # HANA PERF uses DELL R840 and R740, their UEFI IPXE boot need not set_bootscript_hdd
@@ -251,9 +255,9 @@ sub run {
             die "Do not catch needle with tag $ssh_vnc_tag!" if get_var('USB_BOOT');
         }
 
-        save_screenshot;
+	#save_screenshot;
         set_bootscript_hdd if get_var('IPXE_UEFI');
-        set_disk_boot if get_var('VIRT_AUTOTEST');
+	#set_disk_boot if get_var('VIRT_AUTOTEST');
 
         unless (get_var('HOST_INSTALL_AUTOYAST')) {
             select_console 'installation';

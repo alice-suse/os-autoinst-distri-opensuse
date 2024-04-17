@@ -3,11 +3,19 @@ name: qam virtualization tests
 description:    >
     Tests for virtualization tests
 schedule:
-  - console/login
-  - virt_autotest/cleanup_libvirtd_log
-  - '{{qam_tests}}'
-  - virtualization/universal/finish
+  - '{{load_all_switch}}'
+#  - console/login
+#  - virt_autotest/cleanup_libvirtd_log
+#  - '{{qam_tests}}'
+#  - virtualization/universal/finish
 conditional_schedule:
+  load_all_switch:
+    NOT_LOAD_FEATURE_TESTS:
+      '0':
+        - console/login
+        - virt_autotest/cleanup_libvirtd_log
+        - '{{qam_tests}}'
+        - virtualization/universal/finish
   qam_tests:
     VIRT_PART:
       'save_and_restore':

@@ -29,3 +29,5 @@ conditional_schedule:
         - autoyast/prepare_profile
         - boot/boot_from_pxe
         - autoyast/installation
+      'NOT_LOAD_HOST_INSTALL':
+        - virtualization/fake_empty

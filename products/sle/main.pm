@@ -644,6 +644,12 @@ testapi::set_distribution(DistributionProvider->provide());
 $testapi::distri->set_expected_serial_failures(create_list_of_serial_failures());
 $testapi::distri->set_expected_autoinst_failures(create_list_of_autoinst_failures());
 
+if (check_var('MU_VIRT_TEST', '1')) {
+    if (check_var('UPDATE_PACKAGE', 'open-vm-tools')) {
+        set_var('HOST_INSTALL_AUTOYAST',  'NOT_LOAD_HOST_INSTALL');
+    }
+}
+
 if (load_yaml_schedule) {
     if (YuiRestClient::is_libyui_rest_api) {
         YuiRestClient::set_libyui_backend_vars;
